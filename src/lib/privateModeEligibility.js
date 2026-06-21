@@ -16,7 +16,7 @@ const PRIVATE_MODE_ELIGIBLE_PLANS = new Set([
   'enterprise',
 ]);
 
-export const PRIVATE_MODE_ELIGIBILITY_COPY = 'Available on Early Access, Professional, Team, and Enterprise plans';
+export const PRIVATE_MODE_ELIGIBILITY_COPY = 'Available on Early Access, Professional, Enterprise, and manually configured account plans';
 
 export function isPrivateModePlanEligible(planTier) {
   return PRIVATE_MODE_ELIGIBLE_PLANS.has(String(planTier || '').trim().toLowerCase());

@@ -21,9 +21,10 @@ test('Private Mode UI eligibility: Starter and unknown plans are not eligible', 
   assert.equal(isPrivateModePlanEligible(''), false);
 });
 
-test('Private Mode UI copy includes Early Access terminology', () => {
+test('Private Mode UI copy avoids exposing Team as a public plan', () => {
   assert.equal(
     PRIVATE_MODE_ELIGIBILITY_COPY,
-    'Available on Early Access, Professional, Team, and Enterprise plans',
+    'Available on Early Access, Professional, Enterprise, and manually configured account plans',
   );
+  assert.equal(PRIVATE_MODE_ELIGIBILITY_COPY.includes('Team'), false);
 });

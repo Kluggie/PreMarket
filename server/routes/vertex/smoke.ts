@@ -84,12 +84,24 @@ function extractModelText(payload: any) {
   return textParts.join('\n').trim();
 }
 
-function allowPublicSmoke() {
-  if (String(process.env.ALLOW_PUBLIC_VERTEX_SMOKE || '').trim() === '1') {
-    return true;
+function allowPublicSmoke(req: any) {
+  if (String(process.env.ALLOW_PUBLIC_VERTEX_SMOKE || '').trim() !== '1') {
+    return false;
   }
 
-  return String(process.env.NODE_ENV || '').trim() !== 'production';
+  const configuredSecret = String(
+    process.env.VERTEX_SMOKE_SECRET || process.env.VERTEX_SMOKE_TOKEN || '',
+  ).trim();
+  if (!configuredSecret) {
+    return false;
+  }
+
+  const headerSecret = String(req?.headers?.['x-vertex-smoke-secret'] || '').trim();
+  const querySecretRaw = Array.isArray(req?.query?.smoke_secret)
+    ? req.query.smoke_secret[0]
+    : req?.query?.smoke_secret;
+  const querySecret = String(querySecretRaw || '').trim();
+  return headerSecret === configuredSecret || querySecret === configuredSecret;
 }
 
 function pickPrompt(req: any, body: Record<string, unknown>) {
@@ -150,7 +162,7 @@ export default async function handler(req: any, res: any) {
       throw new ApiError(501, 'not_configured', config.message, config.details);
     }
 
-    if (!allowPublicSmoke()) {
+    if (!allowPublicSmoke(req)) {
       const auth = await requireUser(req, res);
       if (!auth.ok) {
         return;

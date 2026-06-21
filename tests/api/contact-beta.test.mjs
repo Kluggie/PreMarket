@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import contactHandler from '../../server/routes/contact/index.ts';
 import betaApplyHandler from '../../server/routes/beta/apply.ts';
@@ -173,5 +174,44 @@ if (!hasDatabaseUrl()) {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].source, 'pricing');
     assert.equal(Boolean(rows[0].userId), true);
+  });
+
+  test('legacy beta apply/count includes newer first-50 trial signup claims', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const db = getDb();
+    await db.insert(schema.betaSignups).values(
+      Array.from({ length: 50 }, (_, index) => ({
+        id: randomUUID(),
+        email: `trial-claimed-${index}@example.com`,
+        emailNormalized: `trial-claimed-${index}@example.com`,
+        source: 'first_50_professional_offer',
+        trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        createdAt: new Date(Date.now() - index * 1000),
+      })),
+    );
+
+    const countRes = await callHandler(betaCountHandler, {
+      method: 'GET',
+      url: '/api/beta/count',
+    });
+    assert.equal(countRes.statusCode, 200);
+    assert.equal(countRes.jsonBody().claimed, 50);
+    assert.equal(countRes.jsonBody().limit, 50);
+
+    const fullApply = await callHandler(betaApplyHandler, {
+      method: 'POST',
+      url: '/api/beta/apply',
+      body: {
+        email: 'legacy-overflow@example.com',
+        source: 'pricing',
+      },
+    });
+
+    assert.equal(fullApply.statusCode, 409);
+    assert.equal(fullApply.jsonBody().error?.code, 'trial_offer_full');
+    assert.equal(fullApply.jsonBody().error?.claimed, 50);
+    assert.equal(fullApply.jsonBody().error?.limit, 50);
   });
 }

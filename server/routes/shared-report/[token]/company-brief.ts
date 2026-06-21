@@ -5,6 +5,10 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { generateCompanyBrief } from '../../../_lib/company-brief.js';
 import {
+  assertAiAssistanceAllowed,
+  recordAiAssistanceUsage,
+} from '../../../_lib/starter-entitlements.js';
+import {
   SHARED_REPORT_ROUTE,
   getToken,
   logTokenEvent,
@@ -60,6 +64,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       throw new ApiError(400, 'missing_company_context', 'Enter a company name before running Company Brief.');
     }
 
+    await assertAiAssistanceAllowed(resolved.db, {
+      userId: resolved.link.userId,
+      actorRole: 'recipient',
+      action: 'company_brief',
+      scopeId: resolved.link.id,
+    });
+
     const result = await generateCompanyBrief({
       companyName,
       website: companyWebsite,
@@ -67,6 +78,18 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     });
 
     const comparisonId = asText(resolved.comparison?.id || resolved.proposal?.documentComparisonId);
+
+    await recordAiAssistanceUsage(resolved.db, {
+      userId: resolved.link.userId,
+      actorRole: 'recipient',
+      action: 'company_brief',
+      scopeId: resolved.link.id,
+      comparisonId: comparisonId || null,
+      sharedLinkId: resolved.link.id,
+      provider: result.provider,
+      model: result.model,
+      requestId: context?.requestId || null,
+    });
 
     ok(res, 200, {
       comparison_id: comparisonId || null,

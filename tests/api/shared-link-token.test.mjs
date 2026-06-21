@@ -54,6 +54,7 @@ if (!hasDatabaseUrl()) {
 
     assert.equal(createShareRes.statusCode, 201);
     const createdShare = createShareRes.jsonBody().sharedLink;
+    assert.equal(createdShare.canReevaluate, false);
 
     const readShareReq = createMockReq({
       method: 'GET',
@@ -71,7 +72,26 @@ if (!hasDatabaseUrl()) {
 
     assert.equal(readPayload.ok, true);
     assert.equal(readPayload.sharedLink.token, createdShare.token);
+    assert.equal(readPayload.sharedLink.canReevaluate, false);
     assert.equal(readPayload.sharedLink.proposal.id, proposalId);
     assert.equal(readPayload.sharedLink.reportMetadata.stage, 'phase2-test');
+
+    const createReevaluationShareReq = createMockReq({
+      method: 'POST',
+      url: '/api/shared-links',
+      headers: { cookie: ownerCookie },
+      body: {
+        proposalId,
+        recipientEmail: 'recipient@example.com',
+        idempotencyKey: `${proposalId}:test-share-reevaluate`,
+        maxUses: 5,
+        can_reevaluate: true,
+      },
+    });
+    const createReevaluationShareRes = createMockRes();
+    await sharedLinksCreateHandler(createReevaluationShareReq, createReevaluationShareRes);
+
+    assert.equal(createReevaluationShareRes.statusCode, 201);
+    assert.equal(createReevaluationShareRes.jsonBody().sharedLink.canReevaluate, true);
   });
 }

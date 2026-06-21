@@ -528,7 +528,7 @@ export default function ProposalDetail() {
         mode: 'workspace',
         canView: true,
         canEdit: true,
-        canReevaluate: true,
+        canReevaluate: false,
         canSendBack: true,
       });
 

@@ -449,25 +449,21 @@ if (!hasDatabaseUrl()) {
     const userId = 'dashboard_early_access_user';
     const email = 'dashboard-early-access-user@example.com';
     const cookie = authCookie(userId, email);
-    await seedProfessionalPlan(userId, email);
+    await seedStarterPlan(userId, email);
 
     const db = getDb();
     await db
-      .insert(schema.billingReferences)
+      .insert(schema.betaSignups)
       .values({
+        id: randomUUID(),
+        email,
+        emailNormalized: email.toLowerCase(),
         userId,
-        plan: 'early_access',
-        status: 'active',
-        updatedAt: new Date(),
+        source: 'pricing',
+        trialEndsAt: addDays(new Date(), 30),
+        createdAt: new Date(),
       })
-      .onConflictDoUpdate({
-        target: schema.billingReferences.userId,
-        set: {
-          plan: 'early_access',
-          status: 'active',
-          updatedAt: new Date(),
-        },
-      });
+      .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
 
     await createProposal(cookie, {
       title: 'Early Access Draft',
@@ -495,7 +491,7 @@ if (!hasDatabaseUrl()) {
       .values({ id: userId, email })
       .onConflictDoNothing({ target: schema.users.id });
 
-    // Seed a betaSignups entry for this user (early access path)
+    // Seed an active betaSignups trial for this user (early access path)
     await db
       .insert(schema.betaSignups)
       .values({
@@ -504,6 +500,7 @@ if (!hasDatabaseUrl()) {
         emailNormalized: email.toLowerCase(),
         userId,
         source: 'pricing',
+        trialEndsAt: addDays(new Date(), 30),
         createdAt: new Date(),
       })
       .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });

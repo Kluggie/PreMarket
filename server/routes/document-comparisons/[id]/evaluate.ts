@@ -49,7 +49,10 @@ import {
   mapComparisonRow,
 } from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
-import { assertAiMediationReviewAllowed } from '../../../_lib/starter-entitlements.js';
+import {
+  releaseAiMediationReviewReservation,
+  reserveAiMediationReviewCredit,
+} from '../../../_lib/starter-entitlements.js';
 import {
   buildSharedReportHref,
   buildLegacyOpportunityNotificationHref,
@@ -1396,9 +1399,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     ensureComparisonFound(existingRow);
     const existing = existingRow as DocumentComparisonRow;
 
-    await assertAiMediationReviewAllowed(db, {
+    let reviewReservationId: string | null = await reserveAiMediationReviewCredit(db, {
       userId: existing.userId,
       userEmail: user.email || null,
+      source: 'document_comparison_evaluate',
+      scopeId: existing.id,
+      requestId,
     });
 
     let linkedProposal = null;
@@ -2287,6 +2293,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         }
       }
     }
+
+    await releaseAiMediationReviewReservation(db, reviewReservationId);
+    reviewReservationId = null;
 
     ok(res, 200, {
       comparison: mapComparisonRow(updated),

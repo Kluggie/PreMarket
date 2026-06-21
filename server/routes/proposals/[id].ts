@@ -553,7 +553,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         throw new ApiError(
           403,
           'plan_not_eligible',
-          'Private Mode is available on Early Access, Professional, Team, and Enterprise plans',
+          'Private Mode is available on Early Access, Professional, Enterprise, and manually configured account plans',
         );
       }
     }

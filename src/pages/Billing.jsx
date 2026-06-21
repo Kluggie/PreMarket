@@ -106,7 +106,7 @@ export default function Billing() {
 
   const PLAN_LABELS = {
     professional: 'Professional',
-    team: 'Team',
+    team: 'Team account',
     enterprise: 'Enterprise',
     early_access: 'Free Trial',
     early_access_program: 'Free Trial',
@@ -152,7 +152,7 @@ export default function Billing() {
                     {isProfessional
                       ? 'A$49.99 per month'
                       : isTeam
-                        ? 'A$199.99 per month'
+                        ? 'Configured team account'
                         : isEnterprise
                           ? 'Custom plan'
                       : isEarlyAccess

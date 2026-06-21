@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
@@ -65,14 +65,26 @@ async function getOptionalUserId(req: any, db: any) {
 }
 
 async function getClaimedCount(db: any) {
-  const [row] = await db
-    .select({
-      claimed: sql<number>`cast(count(*) as integer)`,
-    })
-    .from(schema.betaApplications)
-    .where(inArray(schema.betaApplications.status, ['applied', 'approved']));
+  const result = await db.execute(sql`
+    select count(distinct email_normalized)::int as claimed
+    from (
+      select lower(trim(email_normalized)) as email_normalized
+      from beta_signups
+      where trim(coalesce(email_normalized, '')) <> ''
+      union
+      select lower(trim(email)) as email_normalized
+      from beta_applications
+      where status in ('applied', 'approved')
+        and trim(coalesce(email, '')) <> ''
+    ) seats
+  `);
+  const rows = Array.isArray(result)
+    ? result
+    : Array.isArray((result as any)?.rows)
+      ? (result as any).rows
+      : [];
 
-  return Number(row?.claimed || 0);
+  return Number(rows[0]?.claimed || 0);
 }
 
 export default async function handler(req: any, res: any) {
@@ -90,29 +102,71 @@ export default async function handler(req: any, res: any) {
     const db = getDb();
     const now = new Date();
     const userId = await getOptionalUserId(req, db);
-
-    await db
-      .insert(schema.betaApplications)
-      .values({
-        id: newId('beta_app'),
+    const insertResult = await db.execute(sql`
+      with trial_lock as (
+        select pg_advisory_xact_lock(hashtext('first_50_professional_trial'))
+      ),
+      seat_count as (
+        select count(distinct email_normalized)::int as claimed
+        from (
+          select lower(trim(email_normalized)) as email_normalized
+          from beta_signups
+          where trim(coalesce(email_normalized, '')) <> ''
+          union
+          select lower(trim(email)) as email_normalized
+          from beta_applications
+          where status in ('applied', 'approved')
+            and trim(coalesce(email, '')) <> ''
+        ) seats
+      ),
+      existing_application as (
+        select exists (
+          select 1
+          from beta_applications
+          where email = ${email}
+        ) as found
+      )
+      insert into beta_applications (
+        id,
         email,
-        status: 'applied',
-        userId,
+        status,
+        user_id,
         source,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: schema.betaApplications.email,
-        set: {
-          status: 'applied',
-          source,
-          ...(userId ? { userId } : {}),
-          updatedAt: now,
-        },
-      });
+        created_at,
+        updated_at
+      )
+      select
+        ${newId('beta_app')},
+        ${email},
+        'applied',
+        ${userId},
+        ${source},
+        ${now},
+        ${now}
+      from trial_lock, seat_count, existing_application
+      where existing_application.found = true
+         or seat_count.claimed < ${BETA_LIMIT}
+      on conflict (email) do update set
+        status = 'applied',
+        source = excluded.source,
+        user_id = coalesce(excluded.user_id, beta_applications.user_id),
+        updated_at = excluded.updated_at
+      returning id
+    `);
+    const insertedRows = Array.isArray(insertResult)
+      ? insertResult
+      : Array.isArray((insertResult as any)?.rows)
+        ? (insertResult as any).rows
+        : [];
 
     const claimed = await getClaimedCount(db);
+
+    if (!insertedRows[0]?.id) {
+      throw new ApiError(409, 'trial_offer_full', 'The first 50 Professional trial seats have already been claimed.', {
+        claimed,
+        limit: BETA_LIMIT,
+      });
+    }
 
     ok(res, 200, {
       claimed,

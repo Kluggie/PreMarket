@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import betaSignupsHandler from '../../server/routes/beta-signups/index.ts';
 import betaSignupsStatsHandler from '../../server/routes/beta-signups/stats.ts';
-import { ensureTestEnv } from '../helpers/auth.mjs';
+import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 import { schema } from '../../server/_lib/db/client.js';
@@ -37,6 +38,22 @@ if (!hasDatabaseUrl()) {
     assert.equal(firstCreate.jsonBody().ok, true);
     assert.equal(firstCreate.jsonBody().seatsClaimed, 1);
     assert.equal(firstCreate.jsonBody().seatsTotal, 50);
+    assert.ok(firstCreate.jsonBody().trialEndsAt);
+
+    const db = getDb();
+    const [trialRow] = await db
+      .select()
+      .from(schema.betaSignups)
+      .where(eq(schema.betaSignups.emailNormalized, 'new-beta-user@example.com'))
+      .limit(1);
+
+    assert.equal(trialRow.source, 'first_50_professional_offer');
+    assert.equal(Boolean(trialRow.trialEndsAt), true);
+    const trialLengthDays = Math.round(
+      (new Date(trialRow.trialEndsAt).getTime() - new Date(trialRow.createdAt).getTime()) /
+        (24 * 60 * 60 * 1000),
+    );
+    assert.equal(trialLengthDays, 30);
 
     const stats = await callHandler(betaSignupsStatsHandler, {
       method: 'GET',
@@ -96,6 +113,76 @@ if (!hasDatabaseUrl()) {
 
     assert.equal(rows.length, 1);
     assert.equal(rows[0].email, 'BetaApplicant@Example.com');
+  });
+
+  test('same signed-in user cannot claim multiple Professional trials with different emails', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'trial_duplicate_user';
+    const cookie = makeSessionCookie({ sub: userId, email: 'trial-owner@example.com' });
+    const db = getDb();
+    await db
+      .insert(schema.users)
+      .values({ id: userId, email: 'trial-owner@example.com' })
+      .onConflictDoNothing({ target: schema.users.id });
+
+    const firstCreate = await callHandler(betaSignupsHandler, {
+      method: 'POST',
+      url: '/api/beta-signups',
+      headers: { cookie },
+      body: {
+        email: 'trial-owner@example.com',
+        source: 'pricing',
+      },
+    });
+    assert.equal(firstCreate.statusCode, 200);
+
+    const secondCreate = await callHandler(betaSignupsHandler, {
+      method: 'POST',
+      url: '/api/beta-signups',
+      headers: { cookie },
+      body: {
+        email: 'trial-owner-alias@example.com',
+        source: 'pricing',
+      },
+    });
+
+    assert.equal(secondCreate.statusCode, 409);
+    assert.equal(secondCreate.jsonBody().error?.code, 'already_signed_up');
+    assert.equal(secondCreate.jsonBody().error?.seatsClaimed, 1);
+  });
+
+  test('first-50 Professional trial offer rejects the 51st distinct claimant', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const db = getDb();
+    await db.insert(schema.betaSignups).values(
+      Array.from({ length: 50 }, (_, index) => ({
+        id: randomUUID(),
+        email: `claimed-${index}@example.com`,
+        emailNormalized: `claimed-${index}@example.com`,
+        userId: null,
+        source: 'first_50_professional_offer',
+        createdAt: new Date(Date.now() - index * 1000),
+        trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      })),
+    );
+
+    const overflowCreate = await callHandler(betaSignupsHandler, {
+      method: 'POST',
+      url: '/api/beta-signups',
+      body: {
+        email: 'claim-51@example.com',
+        source: 'pricing',
+      },
+    });
+
+    assert.equal(overflowCreate.statusCode, 409);
+    assert.equal(overflowCreate.jsonBody().error?.code, 'trial_offer_full');
+    assert.equal(overflowCreate.jsonBody().error?.seatsClaimed, 50);
+    assert.equal(overflowCreate.jsonBody().error?.seatsTotal, 50);
   });
 
   test('GET /api/beta-signups/stats reflects persisted count', async () => {

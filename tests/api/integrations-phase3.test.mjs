@@ -1,18 +1,27 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import stripeWebhookHandler from '../../server/routes/stripeWebhook.ts';
+import { createCheckoutSession } from '../../server/routes/billing/_stripe.ts';
 import emailSendHandler from '../../server/routes/email/send.ts';
 import vertexSmokeHandler from '../../server/routes/vertex/smoke.ts';
 import healthHandler from '../../server/routes/health.ts';
 import healthVertexHandler from '../../server/routes/health/vertex.ts';
 import { parseVertexServiceAccountEnv } from '../../server/_lib/integrations.ts';
+import { schema } from '../../server/_lib/db/client.js';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 
 ensureTestEnv();
+
+async function callHandler(handler, reqOptions, ...args) {
+  const req = createMockReq(reqOptions);
+  const res = createMockRes();
+  await handler(req, res, ...args);
+  return res;
+}
 
 test('stripe webhook rejects invalid signatures', async () => {
   process.env.STRIPE_WEBHOOK_SECRET = 'test_whsec';
@@ -69,6 +78,118 @@ test('stripe webhook accepts valid signatures', async () => {
   assert.equal(res.statusCode, 200);
   const payload = res.jsonBody();
   assert.equal(payload.ok, true);
+});
+
+test('Stripe checkout session request has no trial, coupon, or promotion parameters', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSecret = process.env.STRIPE_SECRET_KEY;
+  const capturedRequests = [];
+
+  process.env.STRIPE_SECRET_KEY = 'sk_test_checkout_payload';
+  globalThis.fetch = async (url, init) => {
+    capturedRequests.push({ url: String(url), body: String(init?.body || '') });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: 'cs_test_payload',
+        url: 'https://checkout.stripe.com/c/pay/cs_test_payload',
+      }),
+    };
+  };
+
+  try {
+    await createCheckoutSession({
+      customerId: 'cus_test_payload',
+      priceId: 'price_professional',
+      userId: 'stripe_checkout_payload_user',
+      userEmail: 'stripe-checkout-payload@example.com',
+      successUrl: 'https://app.example.com/Billing?upgrade=success',
+      cancelUrl: 'https://app.example.com/Pricing?upgrade=canceled',
+    });
+
+    assert.equal(capturedRequests.length, 1);
+    assert.equal(capturedRequests[0].url, 'https://api.stripe.com/v1/checkout/sessions');
+
+    const params = new URLSearchParams(capturedRequests[0].body);
+    assert.equal(params.get('mode'), 'subscription');
+    assert.equal(params.get('line_items[0][price]'), 'price_professional');
+    assert.equal(params.get('metadata[user_id]'), 'stripe_checkout_payload_user');
+
+    for (const key of params.keys()) {
+      assert.equal(
+        /trial|coupon|promotion|discount/i.test(key),
+        false,
+        `Unexpected Stripe checkout parameter: ${key}`,
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalSecret === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = originalSecret;
+  }
+});
+
+test('stripe checkout webhook grants explicit paid Professional access', async () => {
+  if (!hasDatabaseUrl()) return;
+  await ensureMigrated();
+  await resetTables();
+
+  const secret = 'test_whsec_paid_checkout';
+  const originalStripeSecret = process.env.STRIPE_SECRET_KEY;
+  process.env.STRIPE_WEBHOOK_SECRET = secret;
+  delete process.env.STRIPE_SECRET_KEY;
+  const userId = 'stripe_paid_checkout_user';
+  const email = 'stripe-paid-checkout@example.com';
+  const db = getDb();
+
+  await db
+    .insert(schema.users)
+    .values({ id: userId, email })
+    .onConflictDoNothing({ target: schema.users.id });
+
+  const body = JSON.stringify({
+    id: 'evt_paid_checkout',
+    type: 'checkout.session.completed',
+    data: {
+      object: {
+        id: 'cs_paid_checkout',
+        customer: 'cus_paid_checkout',
+        subscription: 'sub_paid_checkout',
+        metadata: {
+          user_id: userId,
+          user_email: email,
+        },
+      },
+    },
+  });
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
+  const res = await callHandler(stripeWebhookHandler, {
+    method: 'POST',
+    url: '/api/stripeWebhook',
+    headers: {
+      'stripe-signature': `t=${timestamp},v1=${signature}`,
+      'x-request-id': 'test_req_paid_checkout',
+    },
+    body,
+  });
+
+  assert.equal(res.statusCode, 200);
+
+  const [billing] = await db
+    .select()
+    .from(schema.billingReferences)
+    .where(eq(schema.billingReferences.userId, userId))
+    .limit(1);
+
+  assert.equal(billing.plan, 'professional');
+  assert.equal(billing.status, 'active');
+  assert.equal(billing.stripeCustomerId, 'cus_paid_checkout');
+  assert.equal(billing.stripeSubscriptionId, 'sub_paid_checkout');
+
+  if (originalStripeSecret === undefined) delete process.env.STRIPE_SECRET_KEY;
+  else process.env.STRIPE_SECRET_KEY = originalStripeSecret;
 });
 
 test('vertex config parser supports base64 payloads and escaped private-key newlines', () => {

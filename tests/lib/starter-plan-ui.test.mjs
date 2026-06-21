@@ -101,6 +101,36 @@ test('starter error helper maps backend limit codes to user copy', () => {
   assert.equal(getStarterLimitErrorCopy({ code: 'validation_failed' }, 'create'), null);
 });
 
+test('review-credit error helper maps paid plan exhaustion copy', () => {
+  const professionalError = {
+    body: {
+      error: {
+        code: 'ai_mediation_reviews_monthly_limit_reached',
+        plan: 'professional',
+        limit: 20,
+      },
+    },
+  };
+  const teamError = {
+    body: {
+      error: {
+        code: 'ai_mediation_reviews_monthly_limit_reached',
+        plan: 'team',
+        limit: 100,
+      },
+    },
+  };
+
+  assert.equal(
+    getStarterLimitErrorCopy(professionalError, 'evaluation'),
+    "You've used your 20 AI mediation reviews for this month. Contact us for additional review credits or upgrade your plan.",
+  );
+  assert.equal(
+    getStarterLimitErrorCopy(teamError, 'evaluation'),
+    'Your team has used its 100 AI mediation reviews for this month. Contact us for additional review credits.',
+  );
+});
+
 test('starter pricing limits match the review-credit model', () => {
   assert.equal(STARTER_PLAN_LIMITS.opportunitiesPerMonth, 1,
     'Starter must allow 1 opportunity per month');

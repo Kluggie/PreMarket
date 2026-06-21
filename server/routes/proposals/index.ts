@@ -746,7 +746,8 @@ export default async function handler(req: any, res: any) {
 
     await assertStarterOpportunityCreateAllowed(db, auth.user.id);
 
-    // Plan gating: only Early Access, Professional, Team, and Enterprise may create private opportunities.
+    // Plan gating: Early Access, Professional, Enterprise, and manually configured
+    // account plans may create private opportunities.
     if (isPrivateMode) {
       const [billingRow] = await db
         .select({ plan: schema.billingReferences.plan })
@@ -758,7 +759,7 @@ export default async function handler(req: any, res: any) {
         throw new ApiError(
           403,
           'plan_not_eligible',
-          'Private Mode is available on Early Access, Professional, Team, and Enterprise plans',
+          'Private Mode is available on Early Access, Professional, Enterprise, and manually configured account plans',
         );
       }
     }

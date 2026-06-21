@@ -69,11 +69,32 @@ async function createSharedReportLink(cookie, comparisonId, recipientEmail) {
 if (!hasDatabaseUrl()) {
   test('shared reports workflow integration (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
+  test('shared report links default recipient-triggered AI mediation to disabled', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('shared_report_default_guard_owner', 'default.guard.owner@example.com');
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Default Guard Report',
+      docAText: 'Private owner context for billing guardrails.',
+      docBText: 'Shared opportunity context for the recipient.',
+    });
+
+    const createdShare = await createSharedReportLink(
+      ownerCookie,
+      comparison.id,
+      'recipient@example.com',
+    );
+
+    assert.equal(createdShare.sharedReport?.can_reevaluate, false);
+  });
+
   test('evaluation uses confidential context while shared token response remains recipient-safe', async () => {
     await ensureMigrated();
     await resetTables();
 
     const ownerCookie = authCookie('shared_report_owner', 'owner@example.com');
+    const comparisonOwnerCookie = authCookie('shared_report_compare_owner', 'compare.owner@example.com');
     const confidentialMarker = 'zephyr vault trigger ninety seven';
 
     const lowSimilarity = await createComparison(ownerCookie, {
@@ -82,14 +103,14 @@ if (!hasDatabaseUrl()) {
       docBText: 'Shared obligations include payment terms and delivery milestones for both parties.',
     });
 
-    const highSimilarity = await createComparison(ownerCookie, {
+    const highSimilarity = await createComparison(comparisonOwnerCookie, {
       title: 'Confidential Context B',
       docAText: 'Shared obligations include payment terms and delivery milestones for both parties.',
       docBText: 'Shared obligations include payment terms and delivery milestones for both parties.',
     });
 
     const evaluatedLow = await evaluateComparison(ownerCookie, lowSimilarity.id);
-    const evaluatedHigh = await evaluateComparison(ownerCookie, highSimilarity.id);
+    const evaluatedHigh = await evaluateComparison(comparisonOwnerCookie, highSimilarity.id);
 
     const lowSimilarityScore = Number(evaluatedLow.evaluation?.similarity_score || 0);
     const highSimilarityScore = Number(evaluatedHigh.evaluation?.similarity_score || 0);

@@ -446,6 +446,12 @@ function toFriendlyEvaluateError(error) {
   if (code === 'reevaluation_not_allowed') {
     return 'This link does not allow AI mediation.';
   }
+  if (
+    code === 'starter_ai_evaluations_monthly_limit_reached' ||
+    code === 'ai_mediation_reviews_monthly_limit_reached'
+  ) {
+    return 'This opportunity owner has reached their monthly AI mediation review limit. You can still view and reply, but a new AI mediation review cannot be generated right now.';
+  }
   if (code === 'not_configured') {
     return 'AI mediation is not configured in this environment yet.';
   }
@@ -1977,6 +1983,16 @@ export default function SharedReport() {
       setStep(0);
       return;
     }
+    if (!canReevaluate) {
+      toast.error('This link does not allow AI mediation.');
+      return;
+    }
+    const confirmed = window.confirm(
+      "This will use the opportunity owner's AI mediation review credits.",
+    );
+    if (!confirmed) {
+      return;
+    }
     // Save any pending draft changes before evaluation.
     if (draftDirty) {
       try {
@@ -2983,9 +2999,13 @@ export default function SharedReport() {
       suggestedPromptOptions={DOCUMENT_COMPARISON_COACH_ACTIONS}
       suggestionThreads={suggestionThreads}
       supplementaryAlert={
-        !canReevaluate ? (
+        canReevaluate ? (
+          <p className="text-xs text-amber-700">
+            Full AI mediation reviews use the opportunity owner's AI mediation review credits.
+          </p>
+        ) : (
           <p className="text-xs text-amber-700">AI support is disabled for this shared link.</p>
-        ) : null
+        )
       }
       visibleCoachSuggestions={visibleCoachSuggestions}
     />

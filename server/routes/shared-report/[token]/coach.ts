@@ -12,6 +12,10 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
+  assertAiAssistanceAllowed,
+  recordAiAssistanceUsage,
+} from '../../../_lib/starter-entitlements.js';
+import {
   buildDraftContributionEntries,
   formatContributionsForAi,
   getLinkRecipientAuthorRole,
@@ -476,6 +480,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       return;
     }
 
+    await assertAiAssistanceAllowed(resolved.db, {
+      userId: resolved.link.userId,
+      actorRole: 'recipient',
+      action: intent || mode,
+      scopeId: resolved.link.id,
+    });
+
     const generated = await generateDocumentComparisonCoach({
       title: asText(resolved.comparison?.title) || asText(resolved.proposal?.title) || 'Shared Proposal',
       docAText,
@@ -547,6 +558,18 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         },
       })
       .returning();
+
+    await recordAiAssistanceUsage(resolved.db, {
+      userId: resolved.link.userId,
+      actorRole: 'recipient',
+      action: intent || mode,
+      scopeId: resolved.link.id,
+      comparisonId,
+      sharedLinkId: resolved.link.id,
+      provider: generated.provider,
+      model: generated.model,
+      requestId: context?.requestId || null,
+    });
 
     ok(res, 200, {
       comparison_id: comparisonId,

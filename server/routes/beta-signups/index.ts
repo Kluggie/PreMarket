@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
@@ -10,6 +10,7 @@ import { getSessionFromRequest } from '../../_lib/session.js';
 
 const BETA_SEATS_TOTAL = 50;
 const PROMO_TRIAL_DAYS = 30;
+const FIRST_50_TRIAL_SOURCE = 'first_50_professional_offer';
 const MAX_EMAIL_LENGTH = 320;
 const MAX_SOURCE_LENGTH = 64;
 
@@ -131,12 +132,103 @@ async function handleCreate(req: any, res: any) {
 
   const db = getDb();
   const userId = await getOptionalUserId(req, db);
+  const now = new Date();
+  const trialEndsAt = new Date(now.getTime() + PROMO_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+  const userIdParam = userId || '';
+
+  const insertResult = await db.execute(sql`
+    with trial_lock as (
+      select pg_advisory_xact_lock(hashtext('first_50_professional_trial'))
+    ),
+    seat_count as (
+      select count(distinct email_normalized)::int as claimed
+      from (
+        select lower(trim(email_normalized)) as email_normalized
+        from beta_signups
+        where trim(coalesce(email_normalized, '')) <> ''
+        union
+        select lower(trim(email)) as email_normalized
+        from beta_applications
+        where status in ('applied', 'approved')
+          and trim(coalesce(email, '')) <> ''
+      ) seats
+    ),
+    duplicate_claim as (
+      select (
+        exists (
+          select 1
+          from beta_signups
+          where email_normalized = ${emailNormalized}
+             or (${userIdParam} <> '' and user_id = ${userIdParam})
+        )
+        or exists (
+          select 1
+          from beta_applications
+          where status in ('applied', 'approved')
+            and lower(trim(coalesce(email, ''))) = ${emailNormalized}
+        )
+      ) as found
+    )
+    insert into beta_signups (
+      id,
+      email,
+      email_normalized,
+      user_id,
+      source,
+      trial_ends_at,
+      created_at
+    )
+    select
+      ${randomUUID()},
+      ${email},
+      ${emailNormalized},
+      ${userId},
+      ${FIRST_50_TRIAL_SOURCE},
+      ${trialEndsAt},
+      ${now}
+    from trial_lock, seat_count, duplicate_claim
+    where seat_count.claimed < ${BETA_SEATS_TOTAL}
+      and duplicate_claim.found = false
+    on conflict (email_normalized) do nothing
+    returning id
+  `);
+
+  const insertedRows = Array.isArray(insertResult)
+    ? insertResult
+    : Array.isArray((insertResult as any)?.rows)
+      ? (insertResult as any).rows
+      : [];
+
+  const seatsClaimed = await getSeatsClaimed(db);
+
+  if (insertedRows[0]?.id) {
+    logEvent('insert_success', {
+      emailNormalized,
+      seatsClaimed,
+      source,
+      trialSource: FIRST_50_TRIAL_SOURCE,
+      trialEndsAt: trialEndsAt.toISOString(),
+      hadUserId: Boolean(userId),
+    });
+
+    ok(res, 200, {
+      seatsClaimed,
+      seatsTotal: BETA_SEATS_TOTAL,
+      trialEndsAt,
+    });
+    return;
+  }
+
+  const duplicateConditions = userId
+    ? or(eq(schema.betaSignups.emailNormalized, emailNormalized), eq(schema.betaSignups.userId, userId))
+    : eq(schema.betaSignups.emailNormalized, emailNormalized);
+
   const [existingCurrentSignup] = await db
     .select({
       id: schema.betaSignups.id,
     })
     .from(schema.betaSignups)
-    .where(eq(schema.betaSignups.emailNormalized, emailNormalized))
+    .where(duplicateConditions)
     .limit(1);
 
   const [existingLegacySignup] = await db
@@ -156,24 +248,6 @@ async function handleCreate(req: any, res: any) {
     .limit(1);
 
   if (existingCurrentSignup || existingLegacySignup) {
-    if (!existingCurrentSignup && existingLegacySignup) {
-      await db
-        .insert(schema.betaSignups)
-        .values({
-          id: randomUUID(),
-          email: asText(existingLegacySignup.email) || email,
-          emailNormalized,
-          userId,
-          source: normalizeSource(existingLegacySignup.source || source),
-          createdAt: new Date(),
-        })
-        .onConflictDoNothing({
-          target: schema.betaSignups.emailNormalized,
-        });
-    }
-
-    const seatsClaimed = await getSeatsClaimed(db);
-
     logEvent('insert_duplicate', {
       emailNormalized,
       seatsClaimed,
@@ -189,39 +263,14 @@ async function handleCreate(req: any, res: any) {
     });
   }
 
-  const inserted = await db
-    .insert(schema.betaSignups)
-    .values({
-      id: randomUUID(),
-      email,
-      emailNormalized,
-      userId,
-      source,
-      trialEndsAt: new Date(Date.now() + PROMO_TRIAL_DAYS * 24 * 60 * 60 * 1000),
-      createdAt: new Date(),
-    })
-    .onConflictDoNothing({
-      target: schema.betaSignups.emailNormalized,
-    })
-    .returning({ id: schema.betaSignups.id });
-
-  const seatsClaimed = await getSeatsClaimed(db);
-
-  if (!inserted.length) {
-    throw new ApiError(409, 'already_signed_up', "You're already signed up.", {
-      seatsClaimed,
-      seatsTotal: BETA_SEATS_TOTAL,
-    });
-  }
-
-  logEvent('insert_success', {
+  logEvent('insert_full', {
     emailNormalized,
     seatsClaimed,
     source,
     hadUserId: Boolean(userId),
   });
 
-  ok(res, 200, {
+  throw new ApiError(409, 'trial_offer_full', 'The first 50 Professional trial seats have already been claimed.', {
     seatsClaimed,
     seatsTotal: BETA_SEATS_TOTAL,
   });

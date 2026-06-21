@@ -10,30 +10,22 @@ import {
 import { createSessionToken, getSessionFromRequest, setSessionCookie } from './session.js';
 import { getDb, hasDatabaseUrl, schema } from './db/client.js';
 
-const EARLY_ACCESS_BILLING_ALIASES = new Set([
-  'early_access',
-  'early-access',
-  'early access',
-  'early_access_program',
-  'early-access-program',
-  'early access program',
-]);
+const ELEVATED_BILLING_PLAN_ALIASES = new Set(['professional', 'team', 'enterprise']);
 
 function isPromoActive(betaRow, now = new Date()) {
-  // If the row has no trialEndsAt it pre-dates the expiry column — treat as
-  // non-expired so existing early-access members keep access.
   if (!betaRow?.trialEndsAt) {
-    return true;
+    return false;
   }
-  return new Date(betaRow.trialEndsAt) > now;
+  const trialEndsAt = new Date(betaRow.trialEndsAt);
+  return Number.isFinite(trialEndsAt.getTime()) && trialEndsAt > now;
 }
 
 function resolvePlanTier(billingRow, betaRow, now = new Date()) {
   const billingPlan = String(billingRow?.plan || '').trim().toLowerCase();
 
-  // If the billing row holds an explicitly elevated plan (not the 'starter' /
-  // 'free' default), always trust it — this is a real paid subscription.
-  if (billingPlan && billingPlan !== 'starter' && billingPlan !== 'free') {
+  // Only explicit paid/manual plans can elevate through billingReferences.
+  // Trial access must come from betaSignups with a finite future expiry.
+  if (ELEVATED_BILLING_PLAN_ALIASES.has(billingPlan)) {
     return billingPlan;
   }
 
@@ -45,7 +37,7 @@ function resolvePlanTier(billingRow, betaRow, now = new Date()) {
 
   // Fall back to whatever the billing row says (typically 'starter'), or
   // 'starter' if no billing row exists at all.
-  return billingPlan || 'starter';
+  return 'starter';
 }
 
 function mapDatabaseUser(userRow, billingRow, betaRow = null) {

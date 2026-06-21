@@ -242,7 +242,7 @@ export default async function handler(req: any, res: any) {
         : Boolean(body.canEditConfidential ?? body.can_edit_confidential);
     const canReevaluate =
       body.canReevaluate === undefined && body.can_reevaluate === undefined
-        ? true
+        ? false
         : Boolean(body.canReevaluate ?? body.can_reevaluate);
     const canSendBack =
       body.canSendBack === undefined && body.can_send_back === undefined

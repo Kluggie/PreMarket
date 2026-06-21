@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { PLAN_FEATURES, PLAN_LIMITS } from '../../src/lib/planFeatures.js';
 
 const pricingSource = readFileSync(new URL('../../src/pages/Pricing.jsx', import.meta.url), 'utf8');
+const billingSource = readFileSync(new URL('../../src/pages/Billing.jsx', import.meta.url), 'utf8');
 const allFeatureText = Object.values(PLAN_FEATURES)
   .flat()
   .map((feature) => feature.text)
@@ -17,18 +18,22 @@ test('pricing page uses review-credit language without unlimited fixed-plan AI r
   assert.doesNotMatch(pricingAndFeatures, /3 AI mediation reviews per round/);
 });
 
-test('pricing page shows the four requested plan cards and prices', () => {
-  for (const planName of ['Starter', 'Professional', 'Team', 'Enterprise']) {
+test('pricing page shows only the public Starter, Professional, and Enterprise plan cards', () => {
+  for (const planName of ['Starter', 'Professional', 'Enterprise']) {
     assert.match(pricingSource, new RegExp(`name: '${planName}'`));
   }
 
+  assert.doesNotMatch(pricingSource, /name: 'Team'/);
   assert.match(pricingSource, /price: 'A\$0'/);
   assert.match(pricingSource, /price: 'A\$49\.99'/);
-  assert.match(pricingSource, /price: 'A\$199\.99'/);
   assert.match(pricingSource, /price: 'Custom'/);
+  assert.doesNotMatch(pricingSource, /A\$199\.99/);
+  assert.doesNotMatch(pricingSource, /100 AI mediation reviews\/month/);
+  assert.doesNotMatch(pricingSource, /3-5 users/);
+  assert.doesNotMatch(pricingSource, /Shared workspace/);
 });
 
-test('plan limit config matches visible pricing limits', () => {
+test('plan limit config keeps Team internally while public pricing hides it', () => {
   assert.equal(PLAN_LIMITS.starter.opportunitiesPerMonth, 1);
   assert.equal(PLAN_LIMITS.starter.activeOpportunities, 1);
   assert.equal(PLAN_LIMITS.starter.aiEvaluationsPerMonth, 3);
@@ -39,9 +44,19 @@ test('plan limit config matches visible pricing limits', () => {
   assert.ok(PLAN_FEATURES.starter.some((feature) => feature.text === '1 opportunity per month'));
   assert.ok(PLAN_FEATURES.starter.some((feature) => feature.text === '1 active opportunity at once'));
   assert.ok(PLAN_FEATURES.starter.some((feature) => feature.text === '3 AI mediation reviews per month'));
+  assert.ok(PLAN_FEATURES.starter.some((feature) => feature.text === 'Upgrade required for more review capacity'));
   assert.ok(PLAN_FEATURES.professional.some((feature) => feature.text === '20 AI mediation reviews per month'));
-  assert.ok(PLAN_FEATURES.team.some((feature) => feature.text === '100 AI mediation reviews per month'));
+  assert.ok(PLAN_FEATURES.team.some((feature) => feature.text === '100 AI mediation reviews/month for the team account'));
+  assert.ok(PLAN_FEATURES.team.some((feature) => feature.text === 'Team setup for 3-5 users'));
+  assert.ok(PLAN_FEATURES.team.some((feature) => feature.text === 'Shared workspace setup'));
   assert.ok(PLAN_FEATURES.enterprise.some((feature) => feature.text === 'Custom AI mediation review volume'));
+});
+
+test('billing page has no public Team self-serve price or upgrade path', () => {
+  assert.doesNotMatch(billingSource, /A\$199\.99/);
+  assert.doesNotMatch(billingSource, /Upgrade to Team/);
+  assert.doesNotMatch(billingSource, /View Team/);
+  assert.match(billingSource, /Team account/);
 });
 
 test('pricing page preserves collaboration and non-automatic top-up copy', () => {
@@ -54,7 +69,10 @@ test('pricing page preserves collaboration and non-automatic top-up copy', () =>
 });
 
 test('trial offer maps to Professional review credits without unlimited AI review copy', () => {
-  assert.match(pricingSource, /30 days of Professional free/);
+  assert.match(pricingSource, /Limited-time offer: 30 days of Professional free for the first 50 users/);
   assert.match(pricingSource, /20 AI mediation review credits/);
+  assert.match(pricingSource, /Access expires automatically after 30 days/);
   assert.doesNotMatch(pricingSource, /unlimited AI/i);
+  assert.doesNotMatch(pricingSource, /Free Professional/);
+  assert.doesNotMatch(pricingSource, /Free forever Professional/);
 });

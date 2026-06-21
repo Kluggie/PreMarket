@@ -204,10 +204,10 @@ function buildSharedPayloadFromComparison(params) {
   const comparison = params?.comparison || null;
   const comparisonInputs = toObject(comparison?.inputs);
   const text =
-    asText(comparison?.docBText) ||
     asText(comparisonInputs.shared_doc_content) ||
     asText(comparisonInputs.doc_b_text) ||
-    asText(comparisonInputs.docBText);
+    asText(comparisonInputs.docBText) ||
+    asText(comparison?.docBText);
   return normalizeContributionPayload(
     {
       label: 'Shared Information',
@@ -232,19 +232,19 @@ function buildProposerConfidentialPayloadFromComparison(params) {
     {
       label: 'Confidential to Proposer',
       text:
-        asText(comparison?.docAText) ||
         asText(comparisonInputs.confidential_doc_content) ||
         asText(comparisonInputs.doc_a_text) ||
-        asText(comparisonInputs.docAText),
+        asText(comparisonInputs.docAText) ||
+        asText(comparison?.docAText),
       html: asText(comparisonInputs.doc_a_html),
       json: comparisonInputs.doc_a_json,
       source: asText(comparisonInputs.doc_a_source) || 'typed',
       files: comparisonInputs.doc_a_files,
       notes:
-        asText(comparison?.docAText) ||
         asText(comparisonInputs.confidential_doc_content) ||
         asText(comparisonInputs.doc_a_text) ||
-        asText(comparisonInputs.docAText),
+        asText(comparisonInputs.docAText) ||
+        asText(comparison?.docAText),
     },
     {
       defaultLabel: 'Confidential to Proposer',
@@ -616,12 +616,14 @@ export async function loadSharedReportHistory(params) {
   const hasPersistedSharedBaseline = persistedEntries.some(
     (entry) =>
       entry.authorRole === HISTORY_AUTHOR_PROPOSER &&
-      entry.visibility === HISTORY_VISIBILITY_SHARED,
+      entry.visibility === HISTORY_VISIBILITY_SHARED &&
+      coerceContributionNumber(entry.roundNumber) === 1,
   );
   const hasPersistedConfidentialBaseline = persistedEntries.some(
     (entry) =>
       entry.authorRole === HISTORY_AUTHOR_PROPOSER &&
-      entry.visibility === HISTORY_VISIBILITY_CONFIDENTIAL,
+      entry.visibility === HISTORY_VISIBILITY_CONFIDENTIAL &&
+      coerceContributionNumber(entry.roundNumber) === 1,
   );
   const legacyEntries = [
     ...buildLegacyBaselineEntries({

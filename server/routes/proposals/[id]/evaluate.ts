@@ -27,7 +27,10 @@ import {
   type MediationRoundContext,
 } from '../../../_lib/mediation-progress.js';
 import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js';
-import { assertAiMediationReviewAllowed } from '../../../_lib/starter-entitlements.js';
+import {
+  releaseAiMediationReviewReservation,
+  reserveAiMediationReviewCredit,
+} from '../../../_lib/starter-entitlements.js';
 import { buildStoredV2Evaluation } from '../../document-comparisons/_helpers.js';
 import {
   buildSharedReportHref,
@@ -682,11 +685,6 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       throw new ApiError(404, 'proposal_not_found', 'Proposal not found');
     }
 
-    await assertAiMediationReviewAllowed(db, {
-      userId: proposal.userId,
-      userEmail: proposal.partyAEmail || auth.user.email,
-    });
-
     const responses = await db
       .select()
       .from(schema.proposalResponses)
@@ -695,6 +693,13 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     let result = null;
     let evaluationSource = 'proposal_stage1_intake';
     let linkedComparison: any = null;
+    let reviewReservationId: string | null = await reserveAiMediationReviewCredit(db, {
+      userId: proposal.userId,
+      userEmail: proposal.partyAEmail || auth.user.email,
+      source: 'proposal_evaluate',
+      scopeId: proposal.id,
+      requestId,
+    });
 
     const isDocumentComparisonProposal =
       String(proposal.proposalType || '').toLowerCase() === 'document_comparison' &&
@@ -1086,6 +1091,8 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         source: evaluationSource,
         error,
       });
+      await releaseAiMediationReviewReservation(db, reviewReservationId);
+      reviewReservationId = null;
 
       if (linkedComparison) {
         await db
@@ -1153,6 +1160,9 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     ]);
     const [saved] = savedRows;
     const [updatedProposal] = updatedProposalRows;
+
+    await releaseAiMediationReviewReservation(db, reviewReservationId);
+    reviewReservationId = null;
 
     try {
       const comparisonId = asText(linkedComparison?.id || proposal.documentComparisonId);

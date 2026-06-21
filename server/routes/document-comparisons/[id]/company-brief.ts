@@ -6,6 +6,10 @@ import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { generateCompanyBrief } from '../../../_lib/company-brief.js';
+import {
+  assertAiAssistanceAllowed,
+  recordAiAssistanceUsage,
+} from '../../../_lib/starter-entitlements.js';
 import { ensureComparisonFound } from '../_helpers.js';
 
 function asText(value: unknown) {
@@ -59,10 +63,28 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       throw new ApiError(400, 'missing_company_context', 'Set company context before running Company Brief.');
     }
 
+    await assertAiAssistanceAllowed(db, {
+      userId,
+      actorRole: 'owner',
+      action: 'company_brief',
+      scopeId: comparisonId,
+    });
+
     const result = await generateCompanyBrief({
       companyName,
       website: companyWebsite,
       lens,
+    });
+
+    await recordAiAssistanceUsage(db, {
+      userId,
+      actorRole: 'owner',
+      action: 'company_brief',
+      scopeId: comparisonId,
+      comparisonId,
+      provider: result.provider,
+      model: result.model,
+      requestId: context?.requestId || null,
     });
 
     ok(res, 200, {

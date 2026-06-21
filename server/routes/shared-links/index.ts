@@ -135,7 +135,10 @@ export default async function handler(req: any, res: any) {
       body.canEditConfidential === undefined && body.can_edit_confidential === undefined
         ? canEdit
         : Boolean(body.canEditConfidential ?? body.can_edit_confidential);
-    const canReevaluate = body.canReevaluate === undefined ? true : Boolean(body.canReevaluate);
+    const canReevaluate =
+      body.canReevaluate === undefined && body.can_reevaluate === undefined
+        ? false
+        : Boolean(body.canReevaluate ?? body.can_reevaluate);
     const canSendBack = body.canSendBack === undefined ? true : Boolean(body.canSendBack);
 
     const maxUsesRaw = Number(body.maxUses || body.max_uses || 1);

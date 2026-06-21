@@ -185,6 +185,9 @@ async function handleCheckoutSessionCompleted(payload: any) {
   }
 
   const subscriptionId = asOptionalString(payload?.subscription);
+  if (!subscriptionId) {
+    return;
+  }
 
   // The checkout session object doesn't include current_period_end — that lives
   // on the subscription itself. Fetch it so the billing row is complete from the

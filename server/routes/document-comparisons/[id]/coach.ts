@@ -12,6 +12,10 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
+  assertAiAssistanceAllowed,
+  recordAiAssistanceUsage,
+} from '../../../_lib/starter-entitlements.js';
+import {
   applyCoachLeakGuard,
   applyCoachRelevanceGuard,
   buildCoachCacheHash,
@@ -573,6 +577,13 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       return;
     }
 
+    await assertAiAssistanceAllowed(db, {
+      userId,
+      actorRole: 'owner',
+      action: intent || mode,
+      scopeId: comparisonId,
+    });
+
     const generated = await generateDocumentComparisonCoach({
       title: existing.title,
       docAText,
@@ -645,6 +656,17 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         },
       })
       .returning();
+
+    await recordAiAssistanceUsage(db, {
+      userId,
+      actorRole: 'owner',
+      action: intent || mode,
+      scopeId: comparisonId,
+      comparisonId,
+      provider: generated.provider,
+      model: generated.model,
+      requestId: context?.requestId || null,
+    });
 
     ok(res, 200, {
       comparison_id: comparisonId,

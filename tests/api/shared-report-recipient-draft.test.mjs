@@ -2359,19 +2359,31 @@ if (!hasDatabaseUrl()) {
     assert.equal(saveRes.statusCode, 200);
 
     const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'review',
-        executive_summary: 'Recipient contribution received.',
-        sections: [{ heading: 'Summary', bullets: ['Recipient contribution received.'] }],
-      },
-      evaluation_provider: 'test',
-      similarity_score: 67,
-    });
+    let evaluatorCallCount = 0;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => {
+      evaluatorCallCount += 1;
+      return {
+        report: {
+          recommendation: 'review',
+          executive_summary: 'Recipient contribution received.',
+          sections: [{ heading: 'Summary', bullets: ['Recipient contribution received.'] }],
+        },
+        evaluation_provider: 'test',
+        similarity_score: 67,
+      };
+    };
 
     try {
       const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(evaluateRes.statusCode, 200);
+      const firstBody = evaluateRes.jsonBody();
+
+      const duplicateEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(duplicateEvaluateRes.statusCode, 200);
+      const duplicateBody = duplicateEvaluateRes.jsonBody();
+      assert.equal(duplicateBody?.cached, true);
+      assert.equal(duplicateBody?.evaluation_id, firstBody?.evaluation_id);
+      assert.equal(evaluatorCallCount, 1);
 
       const db = getDb();
       const evalRunRows = await db.execute(
@@ -2379,9 +2391,11 @@ if (!hasDatabaseUrl()) {
             from shared_report_evaluation_runs
             where proposal_id = ${comparison.proposal_id}
             order by created_at desc
-            limit 1`,
+            limit 10`,
       );
-      const inputTrace = evalRunRows.rows[0]?.result_json?.input_trace || {};
+      const successfulRuns = evalRunRows.rows.filter((row) => row?.result_json?.input_trace);
+      assert.equal(successfulRuns.length, 1);
+      const inputTrace = successfulRuns[0]?.result_json?.input_trace || {};
       assert.equal(inputTrace.analysis_stage ?? 'mediation_review', 'mediation_review');
       assert.equal(Boolean(inputTrace.has_meaningful_recipient_content), true);
     } finally {

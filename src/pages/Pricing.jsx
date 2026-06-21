@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Check, X, Zap, Building2, Shield, Users } from 'lucide-react';
+import { Check, X, Zap, Building2, Shield } from 'lucide-react';
 import { PLAN_FEATURES } from '@/lib/planFeatures';
 import { toast } from 'sonner';
 
@@ -92,7 +92,6 @@ export default function Pricing() {
 
   // Enterprise is always admin-provisioned — no Stripe billing cycle.
   // subscription_status is effectively meaningless for enterprise users.
-  const isTeam = Boolean(user) && billing?.plan_tier === 'team';
   const isEnterprise = Boolean(user) && billing?.plan_tier === 'enterprise';
 
   // cancelingSoon: subscription is active (or managed) but scheduled to end at period end.
@@ -193,17 +192,6 @@ export default function Pricing() {
       popular: true,
     },
     {
-      name: 'Team',
-      price: 'A$199.99',
-      period: 'per month',
-      description: 'For teams managing higher opportunity volume',
-      icon: Users,
-      color: 'from-cyan-500 to-blue-600',
-      features: PLAN_FEATURES.team.map((f) => ({ text: f.text, included: true })),
-      cta: 'Contact us',
-      popular: false,
-    },
-    {
       name: 'Enterprise',
       price: 'Custom',
       period: 'contact us',
@@ -237,15 +225,6 @@ export default function Pricing() {
     if (plan.name === 'Enterprise') {
       if (isEnterprise) {
         // Already on Enterprise — route to Billing, not Contact Sales.
-        navigate(createPageUrl('Billing'));
-      } else {
-        setShowContactSales(true);
-      }
-      return;
-    }
-
-    if (plan.name === 'Team') {
-      if (isTeam) {
         navigate(createPageUrl('Billing'));
       } else {
         setShowContactSales(true);
@@ -341,7 +320,7 @@ export default function Pricing() {
           monthly review credits, and invited counterparties can participate in shared opportunities for free.
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8 max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
           {plans.map((plan, index) => (
             <motion.div
               key={plan.name}
@@ -366,10 +345,6 @@ export default function Pricing() {
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="bg-amber-500 text-white px-4 py-1">Payment Issue</Badge>
                 </div>
-              ) : plan.name === 'Team' && isTeam ? (
-                <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
-                  <Badge className="bg-green-600 text-white px-4 py-1">Current Plan</Badge>
-                </div>
               ) : plan.name === 'Enterprise' && isEnterprise ? (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="bg-green-600 text-white px-4 py-1">Current Plan</Badge>
@@ -383,7 +358,6 @@ export default function Pricing() {
                   plan.name === 'Professional' && cancelingSoon
                     ? 'border-2 border-amber-400 shadow-lg'
                     : (plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed'))
-                      || (plan.name === 'Team' && isTeam)
                       || (plan.name === 'Enterprise' && isEnterprise)
                         ? 'border-2 border-green-500 shadow-lg'
                         : plan.name === 'Professional' && professionalState === 'trial'
@@ -444,15 +418,12 @@ export default function Pricing() {
                             ? 'bg-blue-600 hover:bg-blue-700'
                         : plan.name === 'Professional' && professionalState === 'past_due'
                           ? 'bg-amber-500 hover:bg-amber-600'
-                          : plan.name === 'Team' && isTeam
-                            ? 'bg-green-600 hover:bg-green-700'
                           : plan.popular && !professionalState
                             ? 'bg-blue-600 hover:bg-blue-700'
                             : ''
                     }`}
                     variant={
                       professionalState ||
-                      (plan.name === 'Team' && isTeam) ||
                       (plan.name === 'Enterprise' && isEnterprise) ||
                       (plan.popular && !professionalState)
                         ? 'default'
@@ -465,7 +436,7 @@ export default function Pricing() {
                       ? 'Current Plan'
                       : plan.name === 'Professional' && professionalState === 'past_due'
                         ? 'Update Billing'
-                        : (plan.name === 'Team' && isTeam) || (plan.name === 'Enterprise' && isEnterprise)
+                        : plan.name === 'Enterprise' && isEnterprise
                           ? 'View Plan'
                           : plan.cta}
                   </Button>

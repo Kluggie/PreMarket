@@ -11,7 +11,11 @@ import documentComparisonsHandler from '../../server/routes/document-comparisons
 import documentsHandler from '../../server/routes/documents/index.ts';
 import documentsExtractHandler from '../../server/routes/documents/extract.ts';
 import {
+  assertAiAssistanceAllowed,
   assertStarterAiEvaluationAllowed,
+  recordAiAssistanceUsage,
+  releaseAiMediationReviewReservation,
+  reserveAiMediationReviewCredit,
   getAiMediationReviewLimitForPlan,
 } from '../../server/_lib/starter-entitlements.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
@@ -112,7 +116,8 @@ test('AI mediation review credit limits are configured by plan tier', () => {
   assert.equal(getAiMediationReviewLimitForPlan('early_access_program'), 20);
   assert.equal(getAiMediationReviewLimitForPlan('team'), 100);
   assert.equal(getAiMediationReviewLimitForPlan('enterprise'), null);
-  assert.equal(getAiMediationReviewLimitForPlan('custom'), null);
+  assert.equal(getAiMediationReviewLimitForPlan('custom'), 3);
+  assert.equal(getAiMediationReviewLimitForPlan(''), 3);
 });
 
 if (!hasDatabaseUrl()) {
@@ -367,21 +372,11 @@ if (!hasDatabaseUrl()) {
     assert.equal(result.body?.ok, true);
   });
 
-  test('Non-starter plan variants are never treated as starter for creation caps', async () => {
+  test('paid/manual plan variants are never treated as starter for creation caps', async () => {
     await ensureMigrated();
     await resetTables();
 
-    const nonStarterPlans = [
-      'early_access',
-      'early-access',
-      'early access',
-      'early_access_program',
-      'early-access-program',
-      'early access program',
-      'professional',
-      'team',
-      'enterprise',
-    ];
+    const nonStarterPlans = ['professional', 'team', 'enterprise'];
 
     for (const [index, plan] of nonStarterPlans.entries()) {
       const userId = `nonstarter_create_${index}`;
@@ -397,7 +392,7 @@ if (!hasDatabaseUrl()) {
       assert.equal(
         result.status,
         201,
-        `Expected non-starter plan "${plan}" to bypass starter caps: ${JSON.stringify(result.body)}`,
+        `Expected paid/manual plan "${plan}" to bypass starter caps: ${JSON.stringify(result.body)}`,
       );
       assert.equal(result.body?.ok, true);
     }
@@ -411,7 +406,7 @@ if (!hasDatabaseUrl()) {
     const email = 'early-access-no-billing@example.com';
     const cookie = authCookie(userId, email);
 
-    // Seed the user with NO billing row - only a betaSignups entry
+    // Seed the user with NO billing row - only an active betaSignups trial.
     const db = await getDb();
     await db
       .insert(schema.users)
@@ -426,6 +421,7 @@ if (!hasDatabaseUrl()) {
         emailNormalized: email.toLowerCase(),
         userId,
         source: 'pricing',
+        trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         createdAt: new Date(),
       })
       .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
@@ -471,7 +467,7 @@ if (!hasDatabaseUrl()) {
         set: { plan: 'starter', status: 'inactive', updatedAt: new Date() },
       });
 
-    // betaSignups entry — the user IS in Early Access
+    // Active betaSignups trial — the user IS in Early Access
     await db
       .insert(schema.betaSignups)
       .values({
@@ -480,6 +476,7 @@ if (!hasDatabaseUrl()) {
         emailNormalized: email.toLowerCase(),
         userId,
         source: 'pricing',
+        trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         createdAt: new Date(),
       })
       .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
@@ -497,13 +494,9 @@ if (!hasDatabaseUrl()) {
     assert.equal(result.body?.ok, true);
   });
 
-  test('Early Access user with billing row plan early_access_program bypasses proposal caps', async () => {
+  test('Early Access billing aliases without active beta trial fail closed to Starter', async () => {
     await ensureMigrated();
     await resetTables();
-
-    const userId = 'early_access_billing_create';
-    const email = 'early-access-billing@example.com';
-    const cookie = authCookie(userId, email);
 
     const earlyAccessVariants = [
       'early_access',
@@ -519,15 +512,14 @@ if (!hasDatabaseUrl()) {
       const em = `ea-billing-create-${index}@example.com`;
       await seedUserAndPlan(uid, em, plan);
       await seedProposal(uid, `${plan}-p1`);
-      await seedProposal(uid, `${plan}-p2`);
-      await seedProposal(uid, `${plan}-p3`);
 
-      const result = await createProposalViaApi(authCookie(uid, em), `${plan}-p4`);
+      const result = await createProposalViaApi(authCookie(uid, em), `${plan}-p2-should-block`);
       assert.equal(
         result.status,
-        201,
-        `Early Access variant "${plan}" must bypass starter caps: ${JSON.stringify(result.body)}`,
+        429,
+        `Early Access billing alias "${plan}" must not bypass starter caps without an active beta trial: ${JSON.stringify(result.body)}`,
       );
+      assert.equal(result.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
     }
   });
 
@@ -707,6 +699,181 @@ if (!hasDatabaseUrl()) {
         userId: recipientUserId,
         userEmail: recipientEmail,
       }),
+    );
+  });
+
+  test('Review-credit reservations block concurrent monthly overshoot but release cleanly', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_review_reservation';
+    const email = 'starter.review.reservation@example.com';
+    await seedUserAndPlan(userId, email, 'starter');
+    await seedProposal(userId, 'Starter Review Reservation', {
+      id: 'proposal_review_reservation',
+      partyAEmail: email,
+      partyBEmail: 'recipient@example.com',
+    });
+
+    const db = await getDb();
+    const now = new Date();
+    for (let i = 0; i < 2; i += 1) {
+      await db.insert(schema.proposalEvaluations).values({
+        id: `review_reservation_used_${i}`,
+        proposalId: 'proposal_review_reservation',
+        userId,
+        source: 'document_comparison_mediation',
+        status: 'completed',
+        score: 70,
+        summary: 'ok',
+        result: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const reservationId = await reserveAiMediationReviewCredit(db, {
+      userId,
+      userEmail: email,
+      source: 'test_concurrent_review',
+      scopeId: 'proposal_review_reservation',
+      now,
+    });
+
+    await assert.rejects(
+      assertStarterAiEvaluationAllowed(db, {
+        userId,
+        userEmail: email,
+        now,
+      }),
+      (error) =>
+        error?.code === 'starter_ai_evaluations_monthly_limit_reached' &&
+        error?.extra?.used === 2 &&
+        error?.extra?.reserved === 1,
+    );
+
+    await releaseAiMediationReviewReservation(db, reservationId);
+
+    await assert.doesNotReject(
+      assertStarterAiEvaluationAllowed(db, {
+        userId,
+        userEmail: email,
+        now,
+      }),
+    );
+  });
+
+  test('AI assistance quota blocks authenticated cache-miss assistance without using review credits', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_ai_assistance_quota';
+    const email = 'starter.ai.assistance@example.com';
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const db = await getDb();
+    const now = new Date();
+    for (let i = 0; i < 20; i += 1) {
+      await recordAiAssistanceUsage(db, {
+        userId,
+        actorRole: 'owner',
+        action: 'draft_response',
+        scopeId: `comparison_${i}`,
+        comparisonId: `comparison_${i}`,
+        now,
+      });
+    }
+
+    await assert.rejects(
+      assertAiAssistanceAllowed(db, {
+        userId,
+        actorRole: 'owner',
+        action: 'draft_response',
+        scopeId: 'comparison_next',
+        now,
+      }),
+      (error) =>
+        error?.code === 'ai_assistance_monthly_limit_reached' &&
+        error?.extra?.limit === 20 &&
+        error?.extra?.used === 20,
+    );
+
+    await assert.doesNotReject(
+      assertStarterAiEvaluationAllowed(db, {
+        userId,
+        userEmail: email,
+        now,
+      }),
+    );
+  });
+
+  test('Shared-recipient AI assistance and Company Context are scoped per shared link', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_shared_ai_assistance';
+    const email = 'starter.shared.ai.assistance@example.com';
+    await seedUserAndPlan(userId, email, 'professional');
+
+    const db = await getDb();
+    const now = new Date();
+    const checkNow = new Date(now.getTime() + 1000);
+    for (let i = 0; i < 5; i += 1) {
+      await recordAiAssistanceUsage(db, {
+        userId,
+        actorRole: 'recipient',
+        action: 'company_brief',
+        scopeId: 'shared_link_company_context',
+        sharedLinkId: 'shared_link_company_context',
+        now,
+      });
+    }
+
+    await assert.rejects(
+      assertAiAssistanceAllowed(db, {
+        userId,
+        actorRole: 'recipient',
+        action: 'company_brief',
+        scopeId: 'shared_link_company_context',
+        now: checkNow,
+      }),
+      (error) =>
+        error?.code === 'company_context_daily_limit_reached' &&
+        error?.extra?.limit === 5,
+    );
+
+    await assert.doesNotReject(
+      assertAiAssistanceAllowed(db, {
+        userId,
+        actorRole: 'recipient',
+        action: 'draft_response',
+        scopeId: 'shared_link_company_context',
+        now: checkNow,
+      }),
+    );
+
+    for (let i = 5; i < 20; i += 1) {
+      await recordAiAssistanceUsage(db, {
+        userId,
+        actorRole: 'recipient',
+        action: 'draft_response',
+        scopeId: 'shared_link_company_context',
+        sharedLinkId: 'shared_link_company_context',
+        now,
+      });
+    }
+
+    await assert.rejects(
+      assertAiAssistanceAllowed(db, {
+        userId,
+        actorRole: 'recipient',
+        action: 'draft_response',
+        scopeId: 'shared_link_company_context',
+        now: checkNow,
+      }),
+      (error) =>
+        error?.code === 'ai_assistance_shared_link_limit_reached' &&
+        error?.extra?.limit === 20,
     );
   });
 
@@ -1022,7 +1189,7 @@ test('Beta signup with past trialEndsAt falls back to Starter (IS capped)', asyn
   assert.equal(result.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
 });
 
-test('Beta signup with NULL trialEndsAt (legacy row) is treated as non-expired Early Access', async () => {
+test('Beta signup with NULL trialEndsAt fails closed to Starter', async () => {
   if (!hasDatabaseUrl()) return;
   await ensureMigrated();
   await resetTables();
@@ -1049,16 +1216,14 @@ test('Beta signup with NULL trialEndsAt (legacy row) is treated as non-expired E
     .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
 
   await seedProposal(userId, 'trial-null-p1');
-  await seedProposal(userId, 'trial-null-p2');
-  await seedProposal(userId, 'trial-null-p3');
 
-  const result = await createProposalViaApi(cookie, 'trial-null-p4-should-pass');
+  const result = await createProposalViaApi(cookie, 'trial-null-p2-should-be-blocked');
   assert.equal(
     result.status,
-    201,
-    `Legacy beta row with NULL trialEndsAt must not be capped: ${JSON.stringify(result.body)}`,
+    429,
+    `Legacy beta row with NULL trialEndsAt must fall back to starter cap: ${JSON.stringify(result.body)}`,
   );
-  assert.equal(result.body?.ok, true);
+  assert.equal(result.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
 });
 
 test('Paid subscriber with expired beta row still gets professional plan (billing wins)', async () => {

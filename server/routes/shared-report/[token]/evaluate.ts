@@ -1,4 +1,5 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { schema } from '../../../_lib/db/client.js';
@@ -65,7 +66,10 @@ import {
   resolveSharedReportToken,
   toObject,
 } from '../_shared.js';
-import { assertAiMediationReviewAllowed } from '../../../_lib/starter-entitlements.js';
+import {
+  releaseAiMediationReviewReservation,
+  reserveAiMediationReviewCredit,
+} from '../../../_lib/starter-entitlements.js';
 import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewStage.js';
 
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
@@ -94,6 +98,36 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || value === undefined) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function buildSharedReviewIdempotencyKey(params: {
+  sharedLinkId: string;
+  revisionId: string;
+  proposalId: string;
+  comparisonId?: string | null;
+  outgoingRoundNumber: number;
+  sharedText: string;
+  confidentialText: string;
+}) {
+  return createHash('sha256')
+    .update(stableJson(params))
+    .digest('hex');
 }
 
 function getDocumentComparisonEvaluator() {
@@ -391,11 +425,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     });
     requireRecipientAuthorization(resolved.link, auth.user);
 
-    await assertAiMediationReviewAllowed(resolved.db, {
-      userId: resolved.link.userId,
-      userEmail: resolved.owner?.email || resolved.proposal.partyAEmail || null,
-    });
-
     if (!resolved.link.canReevaluate) {
       throw new ApiError(403, 'reevaluation_not_allowed', 'Re-evaluation is disabled for this link');
     }
@@ -616,22 +645,110 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       docBText: sharedText,
     });
 
-    const evaluationRunId = newId('share_eval');
-    await resolved.db.insert(schema.sharedReportEvaluationRuns).values({
-      id: evaluationRunId,
+    const reviewIdempotencyKey = buildSharedReviewIdempotencyKey({
       sharedLinkId: resolved.link.id,
+      revisionId: currentDraft.id,
       proposalId: resolved.proposal.id,
       comparisonId: resolved.comparison?.id || null,
-      revisionId: currentDraft.id,
-      actorRole: RECIPIENT_ROLE,
-      status: 'pending',
-      resultPublicReport: {},
-      resultJson: {},
-      errorCode: null,
-      errorMessage: null,
-      createdAt: now,
-      updatedAt: now,
+      outgoingRoundNumber,
+      sharedText,
+      confidentialText: confidentialBundle,
     });
+
+    const [duplicateRun] = await resolved.db
+      .select()
+      .from(schema.sharedReportEvaluationRuns)
+      .where(
+        and(
+          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
+          eq(schema.sharedReportEvaluationRuns.status, 'success'),
+          sql`${schema.sharedReportEvaluationRuns.resultJson}->>'review_idempotency_key' = ${reviewIdempotencyKey}`,
+        ),
+      )
+      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+      .limit(1);
+
+    if (duplicateRun) {
+      const duplicateResultJson = toObject(duplicateRun.resultJson);
+      ok(res, 200, {
+        ok: true,
+        cached: true,
+        evaluation_id: duplicateRun.id,
+        evaluation: {
+          public_report: duplicateRun.resultPublicReport || {},
+          evaluation_result: duplicateResultJson.evaluation_result || {},
+          status: 'success',
+          runtime_diagnostics: mapRecipientSafeEvaluationDiagnostics({
+            id: duplicateRun.id,
+            status: 'success',
+            resultJson: duplicateResultJson,
+            resultPublicReport: duplicateRun.resultPublicReport || {},
+          }),
+        },
+      });
+      return;
+    }
+
+    const [pendingDuplicateRun] = await resolved.db
+      .select({
+        id: schema.sharedReportEvaluationRuns.id,
+        revisionId: schema.sharedReportEvaluationRuns.revisionId,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(
+        and(
+          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
+          eq(schema.sharedReportEvaluationRuns.status, 'pending'),
+          sql`${schema.sharedReportEvaluationRuns.resultJson}->>'review_idempotency_key' = ${reviewIdempotencyKey}`,
+        ),
+      )
+      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+      .limit(1);
+
+    if (pendingDuplicateRun) {
+      throw new ApiError(
+        409,
+        'evaluation_already_running',
+        'AI mediation is already running for this unchanged draft.',
+        {
+          evaluation_id: pendingDuplicateRun.id,
+          revision_id: pendingDuplicateRun.revisionId,
+        },
+      );
+    }
+
+    let reviewReservationId: string | null = await reserveAiMediationReviewCredit(resolved.db, {
+      userId: resolved.link.userId,
+      userEmail: resolved.owner?.email || resolved.proposal.partyAEmail || null,
+      source: 'shared_report_mediation',
+      scopeId: resolved.link.id,
+      requestId: context?.requestId || null,
+    });
+
+    const evaluationRunId = newId('share_eval');
+    try {
+      await resolved.db.insert(schema.sharedReportEvaluationRuns).values({
+        id: evaluationRunId,
+        sharedLinkId: resolved.link.id,
+        proposalId: resolved.proposal.id,
+        comparisonId: resolved.comparison?.id || null,
+        revisionId: currentDraft.id,
+        actorRole: RECIPIENT_ROLE,
+        status: 'pending',
+        resultPublicReport: {},
+        resultJson: {
+          review_idempotency_key: reviewIdempotencyKey,
+        },
+        errorCode: null,
+        errorMessage: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } catch (error) {
+      await releaseAiMediationReviewReservation(resolved.db, reviewReservationId);
+      reviewReservationId = null;
+      throw error;
+    }
 
     let evaluatorStartedAt: number | null = null;
     let evaluationDiagnostics: Record<string, unknown> = {};
@@ -883,6 +1000,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               convergence_open_questions: convergenceDigest?.openQuestions?.length || 0,
               convergence_resolved_questions: convergenceDigest?.resolvedQuestions?.length || 0,
             },
+            review_idempotency_key: reviewIdempotencyKey,
             exchange_history: normalizedExchangeHistory.map((round) => ({
               round: round.round,
               evaluation_run_id: round.evaluationRunId,
@@ -920,6 +1038,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           updatedAt: completedAt,
         })
         .where(eq(schema.sharedReportEvaluationRuns.id, evaluationRunId));
+
+      await releaseAiMediationReviewReservation(resolved.db, reviewReservationId);
+      reviewReservationId = null;
 
       await resolved.db
         .update(schema.sharedReportRecipientRevisions)
@@ -987,6 +1108,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           updatedAt: failedAt,
         })
         .where(eq(schema.sharedReportEvaluationRuns.id, evaluationRunId));
+      await releaseAiMediationReviewReservation(resolved.db, reviewReservationId);
+      reviewReservationId = null;
       throw failure;
     }
   });

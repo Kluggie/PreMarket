@@ -3,6 +3,7 @@ import {
   formatBytes,
   formatCount,
   isStarterPlanTier,
+  normalizePlanTier,
 } from './starterPlanLimits.js';
 
 function asText(value) {
@@ -20,11 +21,21 @@ export function getApiErrorCode(error) {
 
 export function getStarterLimitErrorCopy(error, context = 'general') {
   const code = getApiErrorCode(error);
+  const planFromPayload = asText(error?.body?.error?.plan || error?.body?.plan || 'starter');
+
+  if (code === 'ai_mediation_reviews_monthly_limit_reached') {
+    const normalizedPlan = normalizePlanTier(planFromPayload);
+    const limit = Number(error?.body?.error?.limit || error?.body?.limit || 0);
+    if (normalizedPlan === 'team') {
+      return `Your team has used its ${formatCount(limit || 100)} AI mediation reviews for this month. Contact us for additional review credits.`;
+    }
+    return `You've used your ${formatCount(limit || 20)} AI mediation reviews for this month. Contact us for additional review credits or upgrade your plan.`;
+  }
+
   if (!code.startsWith('starter_')) {
     return null;
   }
 
-  const planFromPayload = asText(error?.body?.error?.plan || error?.body?.plan || 'starter');
   if (!isStarterPlanTier(planFromPayload)) {
     return null;
   }
@@ -39,9 +50,9 @@ export function getStarterLimitErrorCopy(error, context = 'general') {
 
   if (code === 'starter_ai_evaluations_monthly_limit_reached') {
     if (context === 'evaluation') {
-      return `Starter includes ${formatCount(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth)} AI mediation reviews per month. This opportunity is saved; run another review next month or upgrade.`;
+      return `You've used your ${formatCount(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth)} AI mediation reviews for this month. Upgrade to Professional to continue reviewing opportunities.`;
     }
-    return `Starter includes ${formatCount(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth)} AI mediation reviews per month. Try again next month or upgrade your plan.`;
+    return `Starter includes ${formatCount(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth)} AI mediation reviews per month total. Try again next month or upgrade your plan.`;
   }
 
   if (code === 'starter_upload_per_opportunity_limit_exceeded') {
