@@ -44,8 +44,8 @@ const UPLOAD_BYTES_EVENT = 'upload_bytes';
 const AI_ASSISTANCE_EVENT = 'ai_assistance_call';
 const AI_REVIEW_RESERVATION_EVENT = 'ai_mediation_review_reservation';
 const AI_REVIEW_RESERVATION_TTL_MS = 10 * 60 * 1000;
-const SHARED_LINK_AI_ASSISTANCE_DAILY_LIMIT = 20;
-const COMPANY_CONTEXT_SCOPE_DAILY_LIMIT = 5;
+const SHARED_LINK_AI_ASSISTANCE_DAILY_LIMIT = 5;
+const COMPANY_CONTEXT_SCOPE_DAILY_LIMIT = 1;
 const AI_REVIEW_PROPOSAL_SOURCES: string[] = [
   'proposal_stage1_intake',
   'document_comparison_stage1_intake',
@@ -597,7 +597,8 @@ export async function assertAiAssistanceAllowed(
   if (isCompanyContext && scopedUsed >= COMPANY_CONTEXT_SCOPE_DAILY_LIMIT) {
     throw buildLimitError({
       code: 'company_context_daily_limit_reached',
-      message: 'Company Context is temporarily limited for this opportunity. Try again later.',
+      message:
+        'Company Context has already been generated for this shared opportunity today. You can still use the other suggestion tools or write your response manually.',
       plan: normalizePlan(planTier) || 'starter',
       extra: {
         limit: COMPANY_CONTEXT_SCOPE_DAILY_LIMIT,
@@ -610,7 +611,8 @@ export async function assertAiAssistanceAllowed(
   if (normalizePlan(params.actorRole) === 'recipient' && scopedUsed >= SHARED_LINK_AI_ASSISTANCE_DAILY_LIMIT) {
     throw buildLimitError({
       code: 'ai_assistance_shared_link_limit_reached',
-      message: 'AI assistance is temporarily limited for this shared opportunity. You can still view and reply.',
+      message:
+        'You’ve reached the daily AI suggestion limit for this shared opportunity. You can still write and send your response.',
       plan: normalizePlan(planTier) || 'starter',
       extra: {
         limit: SHARED_LINK_AI_ASSISTANCE_DAILY_LIMIT,

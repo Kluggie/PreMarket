@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { schema } from '../../../_lib/db/client.js';
@@ -75,6 +75,8 @@ import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewSta
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
+const RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE =
+  'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
 
 function logEvaluationRuntime(
   context: any,
@@ -655,6 +657,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       confidentialText: confidentialBundle,
     });
 
+    // Cache hit = exact same inputs already have a saved successful AI result,
+    // so there is no model call and no owner review-credit usage.
     const [duplicateRun] = await resolved.db
       .select()
       .from(schema.sharedReportEvaluationRuns)
@@ -689,6 +693,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       return;
     }
 
+    // Identical cache miss already started: keep the existing in-flight contract.
     const [pendingDuplicateRun] = await resolved.db
       .select({
         id: schema.sharedReportEvaluationRuns.id,
@@ -717,6 +722,41 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       );
     }
 
+    // Cache miss = inputs changed or no saved result exists. Before any model
+    // call or owner review-credit reservation, enforce one recipient-triggered
+    // full AI mediation re-review per shared-link round.
+    const [roundReviewRun] = await resolved.db
+      .select({
+        id: schema.sharedReportEvaluationRuns.id,
+        revisionId: schema.sharedReportEvaluationRuns.revisionId,
+        status: schema.sharedReportEvaluationRuns.status,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(
+        and(
+          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
+          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+          inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
+          sql`${schema.sharedReportEvaluationRuns.resultJson}->'input_trace'->>'exchange_round' = ${String(outgoingRoundNumber)}`,
+        ),
+      )
+      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+      .limit(1);
+
+    if (roundReviewRun) {
+      throw new ApiError(
+        409,
+        'recipient_rereview_limit_reached',
+        RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE,
+        {
+          evaluation_id: roundReviewRun.id,
+          revision_id: roundReviewRun.revisionId,
+          exchange_round: outgoingRoundNumber,
+          status: roundReviewRun.status,
+        },
+      );
+    }
+
     let reviewReservationId: string | null = await reserveAiMediationReviewCredit(resolved.db, {
       userId: resolved.link.userId,
       userEmail: resolved.owner?.email || resolved.proposal.partyAEmail || null,
@@ -738,6 +778,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         resultPublicReport: {},
         resultJson: {
           review_idempotency_key: reviewIdempotencyKey,
+          input_trace: {
+            exchange_round: outgoingRoundNumber,
+          },
         },
         errorCode: null,
         errorMessage: null,

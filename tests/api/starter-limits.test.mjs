@@ -818,16 +818,14 @@ if (!hasDatabaseUrl()) {
     const db = await getDb();
     const now = new Date();
     const checkNow = new Date(now.getTime() + 1000);
-    for (let i = 0; i < 5; i += 1) {
-      await recordAiAssistanceUsage(db, {
-        userId,
-        actorRole: 'recipient',
-        action: 'company_brief',
-        scopeId: 'shared_link_company_context',
-        sharedLinkId: 'shared_link_company_context',
-        now,
-      });
-    }
+    await recordAiAssistanceUsage(db, {
+      userId,
+      actorRole: 'recipient',
+      action: 'company_brief',
+      scopeId: 'shared_link_company_context',
+      sharedLinkId: 'shared_link_company_context',
+      now,
+    });
 
     await assert.rejects(
       assertAiAssistanceAllowed(db, {
@@ -839,7 +837,9 @@ if (!hasDatabaseUrl()) {
       }),
       (error) =>
         error?.code === 'company_context_daily_limit_reached' &&
-        error?.extra?.limit === 5,
+        error?.extra?.limit === 1 &&
+        error?.message ===
+          'Company Context has already been generated for this shared opportunity today. You can still use the other suggestion tools or write your response manually.',
     );
 
     await assert.doesNotReject(
@@ -852,7 +852,7 @@ if (!hasDatabaseUrl()) {
       }),
     );
 
-    for (let i = 5; i < 20; i += 1) {
+    for (let i = 1; i < 5; i += 1) {
       await recordAiAssistanceUsage(db, {
         userId,
         actorRole: 'recipient',
@@ -873,7 +873,9 @@ if (!hasDatabaseUrl()) {
       }),
       (error) =>
         error?.code === 'ai_assistance_shared_link_limit_reached' &&
-        error?.extra?.limit === 20,
+        error?.extra?.limit === 5 &&
+        error?.message ===
+          'You’ve reached the daily AI suggestion limit for this shared opportunity. You can still write and send your response.',
     );
   });
 

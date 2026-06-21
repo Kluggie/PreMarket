@@ -1006,6 +1006,100 @@ if (!hasDatabaseUrl()) {
     }
   });
 
+  test('Prompt2 evaluate owner exhaustion blocks only new review generation', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'p2_owner_review_exhausted';
+    const ownerUserId = `${seed}_owner`;
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Owner Exhausted Recipient Evaluate',
+      docAText: 'Proposer private baseline terms for owner review exhaustion coverage.',
+      docBText: 'Shared baseline that recipient can revise and send even when owner reviews are exhausted.',
+    });
+
+    const db = getDb();
+    const now = new Date();
+    for (let i = 0; i < 3; i += 1) {
+      await db.execute(sql`
+        insert into proposal_evaluations (
+          id, proposal_id, user_id, source, status, score, summary, result, created_at, updated_at
+        )
+        values (
+          ${`p2_owner_review_exhausted_eval_${i}`},
+          ${comparison.proposal_id},
+          ${ownerUserId},
+          'document_comparison_mediation',
+          'completed',
+          70,
+          'used review credit',
+          '{}'::jsonb,
+          ${now},
+          ${now}
+        )
+      `);
+    }
+
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+    });
+
+    const saveRes = await saveRecipientDraft(link.token, {
+      shared_payload: {
+        label: 'Shared Information',
+        text: 'Recipient shared contribution remains editable and sendable after owner review credits are exhausted.',
+      },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Recipient confidential contribution remains part of the normal reply flow.',
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(saveRes.statusCode, 200);
+
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    let evaluatorCallCount = 0;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => {
+      evaluatorCallCount += 1;
+      return {
+        report: {
+          recommendation: 'review',
+          executive_summary: 'Should not run when owner review credits are exhausted.',
+          sections: [{ heading: 'Summary', bullets: ['Should not run.'] }],
+        },
+        evaluation_provider: 'test',
+        similarity_score: 60,
+      };
+    };
+
+    try {
+      const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(evaluateRes.statusCode, 429);
+      assert.equal(evaluateRes.jsonBody()?.error?.code, 'starter_ai_evaluations_monthly_limit_reached');
+      assert.equal(evaluatorCallCount, 0);
+
+      const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceRes.statusCode, 200);
+
+      const sendBackRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(sendBackRes.statusCode, 200);
+      assert.equal(sendBackRes.jsonBody()?.status, 'sent');
+    } finally {
+      if (previousEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+      }
+    }
+  });
+
   test('Prompt2 send-back requires draft and marks recipient revision as sent', async () => {
     await ensureMigrated();
     await resetTables();
@@ -2378,12 +2472,46 @@ if (!hasDatabaseUrl()) {
       assert.equal(evaluateRes.statusCode, 200);
       const firstBody = evaluateRes.jsonBody();
 
+      // Cache hit: exact same draft/round inputs reuse the saved successful
+      // result, so no model call or owner review-credit usage is added.
       const duplicateEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(duplicateEvaluateRes.statusCode, 200);
       const duplicateBody = duplicateEvaluateRes.jsonBody();
       assert.equal(duplicateBody?.cached, true);
       assert.equal(duplicateBody?.evaluation_id, firstBody?.evaluation_id);
       assert.equal(evaluatorCallCount, 1);
+
+      const changedSaveRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text:
+            'Recipient response changes the same round with revised sequencing, dependency limits, acceptance constraints, and rollout governance.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential notes add commercial boundaries for internal review.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(changedSaveRes.statusCode, 200);
+
+      // Cache miss: inputs changed, so this would require a new model call and
+      // owner review credit. The per-round recipient re-review cap blocks it.
+      const cappedEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(cappedEvaluateRes.statusCode, 409);
+      assert.equal(cappedEvaluateRes.jsonBody()?.error?.code, 'recipient_rereview_limit_reached');
+      assert.equal(
+        cappedEvaluateRes.jsonBody()?.error?.message,
+        'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
+      );
+      assert.equal(evaluatorCallCount, 1);
+
+      const workspaceAfterCapRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceAfterCapRes.statusCode, 200);
+
+      const sendBackAfterCapRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(sendBackAfterCapRes.statusCode, 200);
+      assert.equal(sendBackAfterCapRes.jsonBody()?.status, 'sent');
 
       const db = getDb();
       const evalRunRows = await db.execute(
@@ -2399,6 +2527,94 @@ if (!hasDatabaseUrl()) {
       assert.equal(inputTrace.analysis_stage ?? 'mediation_review', 'mediation_review');
       assert.equal(Boolean(inputTrace.has_meaningful_recipient_content), true);
     } finally {
+      if (previousEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+      }
+    }
+  });
+
+  test('shared-report identical in-flight evaluation returns evaluation_already_running', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'shared_report_inflight_duplicate';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'In-flight Duplicate Test',
+      docAText: 'Internal proposer notes and fallback constraints for in-flight duplicate coverage.',
+      docBText: 'Shared proposer draft with scope, milestones, and responsibilities.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+    });
+
+    const saveRes = await saveRecipientDraft(link.token, {
+      shared_payload: {
+        label: 'Shared Information',
+        text: 'Recipient response adds delivery sequencing, dependency limits, and acceptance constraints.',
+      },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Recipient confidential notes add commercial boundaries for internal review.',
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(saveRes.statusCode, 200);
+
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    let evaluatorCallCount = 0;
+    let resolveEvaluatorStarted;
+    const evaluatorStarted = new Promise((resolve) => {
+      resolveEvaluatorStarted = resolve;
+    });
+    let releaseEvaluator;
+    const evaluatorRelease = new Promise((resolve) => {
+      releaseEvaluator = resolve;
+    });
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => {
+      evaluatorCallCount += 1;
+      resolveEvaluatorStarted();
+      await evaluatorRelease;
+      return {
+        report: {
+          recommendation: 'review',
+          executive_summary: 'Recipient contribution received after pending duplicate check.',
+          sections: [{ heading: 'Summary', bullets: ['Recipient contribution received.'] }],
+        },
+        evaluation_provider: 'test',
+        similarity_score: 67,
+      };
+    };
+
+    let firstEvaluatePromise;
+    try {
+      firstEvaluatePromise = evaluateRecipientDraft(link.token, {}, recipientCookie);
+      await evaluatorStarted;
+
+      const duplicateEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(duplicateEvaluateRes.statusCode, 409);
+      assert.equal(duplicateEvaluateRes.jsonBody()?.error?.code, 'evaluation_already_running');
+      assert.equal(evaluatorCallCount, 1);
+
+      releaseEvaluator();
+      const firstEvaluateRes = await firstEvaluatePromise;
+      assert.equal(firstEvaluateRes.statusCode, 200);
+      assert.equal(evaluatorCallCount, 1);
+    } finally {
+      if (typeof releaseEvaluator === 'function') {
+        releaseEvaluator();
+      }
+      if (firstEvaluatePromise) {
+        await firstEvaluatePromise.catch(() => {});
+      }
       if (previousEvaluator === undefined) {
         delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
       } else {
@@ -2671,7 +2887,30 @@ if (!hasDatabaseUrl()) {
       assert.equal(firstReport.bilateral_round_number, 1);
       assert.equal(firstReport.delta_summary ?? null, null);
 
-      const secondSaveRes = await saveRecipientDraft(link.token, {
+      const firstSendBackRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(firstSendBackRes.statusCode, 200);
+      const ownerReturnToken = String(firstSendBackRes.jsonBody()?.return_link?.token || '');
+      assert.notEqual(ownerReturnToken, '');
+
+      const ownerRoundSaveRes = await saveRecipientDraft(ownerReturnToken, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Owner round two accepts the implementation sequencing and asks the recipient to confirm commercial acceptance criteria.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Owner internal round two note keeps final approval bounded to named stakeholders.',
+        },
+        workflow_step: 2,
+      }, ownerCookie);
+      assert.equal(ownerRoundSaveRes.statusCode, 200);
+
+      const ownerSendBackRes = await sendBackRecipientDraft(ownerReturnToken, {}, ownerCookie);
+      assert.equal(ownerSendBackRes.statusCode, 200);
+      const recipientRoundTwoToken = String(ownerSendBackRes.jsonBody()?.return_link?.token || '');
+      assert.notEqual(recipientRoundTwoToken, '');
+
+      const secondSaveRes = await saveRecipientDraft(recipientRoundTwoToken, {
         shared_payload: {
           label: 'Shared Information',
           text: 'Recipient round two confirms implementation sequencing and narrows the remaining issue to commercial acceptance criteria and final approval ownership.',
@@ -2684,7 +2923,7 @@ if (!hasDatabaseUrl()) {
       }, recipientCookie);
       assert.equal(secondSaveRes.statusCode, 200);
 
-      const secondEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie, { engine: 'v2' });
+      const secondEvaluateRes = await evaluateRecipientDraft(recipientRoundTwoToken, {}, recipientCookie, { engine: 'v2' });
       assert.equal(secondEvaluateRes.statusCode, 200);
 
       const secondReport = secondEvaluateRes.jsonBody()?.evaluation?.evaluation_result?.report || {};

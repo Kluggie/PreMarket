@@ -141,6 +141,28 @@ test('recipient Step 3 review package has Run AI Mediation action', async () => 
   );
 });
 
+test('recipient Run AI Mediation warns about owner credits and surfaces the per-round cap copy', async () => {
+  const source = await readFile(SHARED_REPORT_PATH, 'utf8');
+  const routeSource = await readFile(SHARED_REPORT_EVALUATE_ROUTE_PATH, 'utf8');
+
+  assert.ok(
+    source.includes("This will use the opportunity owner's AI mediation review credits."),
+    'Recipient-triggered mediation must warn that owner credits will be used',
+  );
+  assert.ok(
+    source.includes('recipient_rereview_limit_reached'),
+    'SharedReport must map the per-round recipient re-review cap code',
+  );
+  assert.ok(
+    source.includes(
+      'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
+    ),
+    'SharedReport must surface the per-round recipient re-review cap copy',
+  );
+  assert.ok(routeSource.includes('Cache hit = exact same inputs already have a saved successful AI result'));
+  assert.ok(routeSource.includes('Cache miss = inputs changed or no saved result exists'));
+});
+
 test('recipient Run AI Mediation client calls shared-report evaluate with POST', async () => {
   const source = await readFile(SHARED_REPORTS_CLIENT_PATH, 'utf8');
   const start = source.indexOf('async evaluateRecipient(token');

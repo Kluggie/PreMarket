@@ -446,6 +446,9 @@ function toFriendlyEvaluateError(error) {
   if (code === 'reevaluation_not_allowed') {
     return 'This link does not allow AI mediation.';
   }
+  if (code === 'recipient_rereview_limit_reached') {
+    return 'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
+  }
   if (
     code === 'starter_ai_evaluations_monthly_limit_reached' ||
     code === 'ai_mediation_reviews_monthly_limit_reached'
