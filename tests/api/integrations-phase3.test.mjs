@@ -192,6 +192,102 @@ test('stripe checkout webhook grants explicit paid Professional access', async (
   else process.env.STRIPE_SECRET_KEY = originalStripeSecret;
 });
 
+test('stripe webhook ignores customer-only events without subscription id', async () => {
+  if (!hasDatabaseUrl()) return;
+  await ensureMigrated();
+  await resetTables();
+
+  const secret = 'test_whsec_no_subscription';
+  const userId = 'stripe_no_subscription_user';
+  const email = 'stripe-no-subscription@example.com';
+  const db = getDb();
+  process.env.STRIPE_WEBHOOK_SECRET = secret;
+
+  await db
+    .insert(schema.users)
+    .values({ id: userId, email })
+    .onConflictDoNothing({ target: schema.users.id });
+
+  await db.insert(schema.billingReferences).values({
+    userId,
+    stripeCustomerId: 'cus_no_subscription',
+    plan: 'starter',
+    status: 'inactive',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  for (const [index, event] of [
+    {
+      id: 'evt_checkout_without_subscription',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_without_subscription',
+          customer: 'cus_no_subscription',
+          metadata: {
+            user_id: userId,
+            user_email: email,
+          },
+        },
+      },
+    },
+    {
+      id: 'evt_subscription_without_id',
+      type: 'customer.subscription.created',
+      data: {
+        object: {
+          customer: 'cus_no_subscription',
+          status: 'active',
+          metadata: {
+            user_id: userId,
+          },
+        },
+      },
+    },
+    {
+      id: 'evt_invoice_without_subscription',
+      type: 'invoice.payment_succeeded',
+      data: {
+        object: {
+          customer: 'cus_no_subscription',
+          subscription: null,
+          subscription_details: {
+            metadata: {
+              user_id: userId,
+            },
+          },
+        },
+      },
+    },
+  ].entries()) {
+    const body = JSON.stringify(event);
+    const timestamp = Math.floor(Date.now() / 1000) + index;
+    const signature = createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
+    const res = await callHandler(stripeWebhookHandler, {
+      method: 'POST',
+      url: '/api/stripeWebhook',
+      headers: {
+        'stripe-signature': `t=${timestamp},v1=${signature}`,
+        'x-request-id': `test_req_no_subscription_${index}`,
+      },
+      body,
+    });
+
+    assert.equal(res.statusCode, 200);
+  }
+
+  const [billing] = await db
+    .select()
+    .from(schema.billingReferences)
+    .where(eq(schema.billingReferences.userId, userId))
+    .limit(1);
+
+  assert.equal(billing.plan, 'starter');
+  assert.equal(billing.status, 'inactive');
+  assert.equal(billing.stripeSubscriptionId, null);
+});
+
 test('vertex config parser supports base64 payloads and escaped private-key newlines', () => {
   const original = process.env.GCP_SERVICE_ACCOUNT_JSON;
   const originalGoogle = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;

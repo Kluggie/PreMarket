@@ -220,6 +220,10 @@ async function handleCheckoutSessionCompleted(payload: any) {
 async function handleSubscriptionEvent(payload: any, deleted = false) {
   const customerId = asString(payload?.customer);
   const subscriptionId = asString(payload?.id);
+  if (!subscriptionId) {
+    return;
+  }
+
   const metadataUserId = asString(payload?.metadata?.user_id || payload?.metadata?.userId);
   const userId = await resolveBillingUserId(customerId, subscriptionId, metadataUserId);
 
@@ -242,6 +246,10 @@ async function handleSubscriptionEvent(payload: any, deleted = false) {
 async function handleInvoiceEvent(payload: any, paymentSucceeded: boolean) {
   const customerId = asString(payload?.customer);
   const subscriptionId = asString(payload?.subscription);
+  if (!subscriptionId) {
+    return;
+  }
+
   const metadataUserId = asString(
     payload?.subscription_details?.metadata?.user_id || payload?.subscription_details?.metadata?.userId,
   );
