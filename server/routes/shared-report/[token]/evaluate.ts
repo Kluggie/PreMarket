@@ -75,6 +75,8 @@ import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewSta
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
+const ADDITIONAL_REREVIEW_NOT_ALLOWED_MESSAGE =
+  'This link does not allow additional AI re-reviews. You can still edit and send your response.';
 const RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE =
   'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
 
@@ -427,10 +429,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     });
     requireRecipientAuthorization(resolved.link, auth.user);
 
-    if (!resolved.link.canReevaluate) {
-      throw new ApiError(403, 'reevaluation_not_allowed', 'Re-evaluation is disabled for this link');
-    }
-
     const defaultSharedPayload = buildDefaultSharedPayload({
       proposal: resolved.proposal,
       comparison: resolved.comparison,
@@ -723,9 +721,26 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     }
 
     // Cache miss = inputs changed or no saved result exists. Before any model
-    // call or owner review-credit reservation, enforce one recipient-triggered
-    // full AI mediation re-review per shared-link round.
-    const [roundReviewRun] = await resolved.db
+    // call or owner review-credit reservation, enforce the per-round policy:
+    // 1) first recipient review is allowed by default, and
+    // 2) only one additional non-cached re-review is allowed when enabled.
+    const [roundReviewCountRow] = await resolved.db
+      .select({
+        runCount: sql<number>`count(*)::int`,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(
+        and(
+          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
+          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+          inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
+          sql`${schema.sharedReportEvaluationRuns.resultJson}->'input_trace'->>'exchange_round' = ${String(outgoingRoundNumber)}`,
+        ),
+      );
+
+    const existingRoundRunCount = Number(roundReviewCountRow?.runCount || 0) || 0;
+
+    const [latestRoundReviewRun] = await resolved.db
       .select({
         id: schema.sharedReportEvaluationRuns.id,
         revisionId: schema.sharedReportEvaluationRuns.revisionId,
@@ -743,16 +758,31 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
       .limit(1);
 
-    if (roundReviewRun) {
+    if (existingRoundRunCount > 0 && !resolved.link.canReevaluate) {
+      throw new ApiError(
+        403,
+        'reevaluation_not_allowed',
+        ADDITIONAL_REREVIEW_NOT_ALLOWED_MESSAGE,
+        {
+          evaluation_id: latestRoundReviewRun?.id || null,
+          revision_id: latestRoundReviewRun?.revisionId || null,
+          exchange_round: outgoingRoundNumber,
+          status: latestRoundReviewRun?.status || null,
+        },
+      );
+    }
+
+    const additionalRoundReviewsUsed = Math.max(0, existingRoundRunCount - 1);
+    if (additionalRoundReviewsUsed >= 1) {
       throw new ApiError(
         409,
         'recipient_rereview_limit_reached',
         RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE,
         {
-          evaluation_id: roundReviewRun.id,
-          revision_id: roundReviewRun.revisionId,
+          evaluation_id: latestRoundReviewRun?.id || null,
+          revision_id: latestRoundReviewRun?.revisionId || null,
           exchange_round: outgoingRoundNumber,
-          status: roundReviewRun.status,
+          status: latestRoundReviewRun?.status || null,
         },
       );
     }

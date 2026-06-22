@@ -27,6 +27,16 @@ ensureTestEnv();
 
 const MB = 1024 * 1024;
 
+function serialTest(name, optionsOrFn, maybeFn) {
+  if (typeof optionsOrFn === 'function') {
+    return test(name, { concurrency: 1 }, optionsOrFn);
+  }
+
+  const options = optionsOrFn && typeof optionsOrFn === 'object' ? optionsOrFn : {};
+  const fn = typeof maybeFn === 'function' ? maybeFn : () => {};
+  return test(name, { ...options, concurrency: 1 }, fn);
+}
+
 function authCookie(userId, email) {
   return makeSessionCookie({ sub: userId, email });
 }
@@ -108,7 +118,7 @@ function startOfPreviousUtcMonth() {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 0, 0));
 }
 
-test('AI mediation review credit limits are configured by plan tier', () => {
+serialTest('AI mediation review credit limits are configured by plan tier', () => {
   assert.equal(getAiMediationReviewLimitForPlan('starter'), 3);
   assert.equal(getAiMediationReviewLimitForPlan('free'), 3);
   assert.equal(getAiMediationReviewLimitForPlan('professional'), 20);
@@ -1115,7 +1125,7 @@ if (!hasDatabaseUrl()) {
 // ---------------------------------------------------------------------------
 // Trial expiry tests
 // ---------------------------------------------------------------------------
-test('Beta signup with future trialEndsAt is treated as Early Access (not capped)', async () => {
+serialTest('Beta signup with future trialEndsAt is treated as Early Access (not capped)', async () => {
   if (!hasDatabaseUrl()) return;
   await ensureMigrated();
   await resetTables();
@@ -1154,7 +1164,7 @@ test('Beta signup with future trialEndsAt is treated as Early Access (not capped
   assert.equal(result.body?.ok, true);
 });
 
-test('Beta signup with past trialEndsAt falls back to Starter (IS capped)', async () => {
+serialTest('Beta signup with past trialEndsAt falls back to Starter (IS capped)', async () => {
   if (!hasDatabaseUrl()) return;
   await ensureMigrated();
   await resetTables();
@@ -1191,7 +1201,7 @@ test('Beta signup with past trialEndsAt falls back to Starter (IS capped)', asyn
   assert.equal(result.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
 });
 
-test('Beta signup with NULL trialEndsAt fails closed to Starter', async () => {
+serialTest('Beta signup with NULL trialEndsAt fails closed to Starter', async () => {
   if (!hasDatabaseUrl()) return;
   await ensureMigrated();
   await resetTables();
@@ -1228,7 +1238,7 @@ test('Beta signup with NULL trialEndsAt fails closed to Starter', async () => {
   assert.equal(result.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
 });
 
-test('Paid subscriber with expired beta row still gets professional plan (billing wins)', async () => {
+serialTest('Paid subscriber with expired beta row still gets professional plan (billing wins)', async () => {
   if (!hasDatabaseUrl()) return;
   await ensureMigrated();
   await resetTables();

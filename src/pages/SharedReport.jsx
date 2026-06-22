@@ -444,7 +444,7 @@ function toFriendlyEvaluateError(error) {
     return 'AI mediation took too long to complete. Please retry in a moment.';
   }
   if (code === 'reevaluation_not_allowed') {
-    return 'This link does not allow AI mediation.';
+    return 'This link does not allow additional AI re-reviews. You can still edit and send your response.';
   }
   if (code === 'recipient_rereview_limit_reached') {
     return 'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
@@ -733,7 +733,6 @@ export default function SharedReport() {
   const requiresRecipientVerification =
     Boolean(isAuthenticated && invitedEmail) && !authorizedForCurrentUser;
 
-  const canReevaluate = Boolean(share?.permissions?.can_reevaluate);
   const canSendBack = Boolean(share?.permissions?.can_send_back);
   const canUpdateOutcomeFromStep0 = Boolean(
     isAuthenticated &&
@@ -1986,10 +1985,6 @@ export default function SharedReport() {
       setStep(0);
       return;
     }
-    if (!canReevaluate) {
-      toast.error('This link does not allow AI mediation.');
-      return;
-    }
     const confirmed = window.confirm(
       "This will use the opportunity owner's AI mediation review credits.",
     );
@@ -2864,7 +2859,7 @@ export default function SharedReport() {
     coachResponseMetaParts.push('Limited public info found');
   }
   const coachResponseMeta = coachResponseMetaParts.join(' · ');
-  const canRunCoach = Boolean(canReevaluate) && !requiresRecipientVerification;
+  const canRunCoach = !requiresRecipientVerification;
 
   if (!token) {
     return (
@@ -3002,13 +2997,9 @@ export default function SharedReport() {
       suggestedPromptOptions={DOCUMENT_COMPARISON_COACH_ACTIONS}
       suggestionThreads={suggestionThreads}
       supplementaryAlert={
-        canReevaluate ? (
-          <p className="text-xs text-amber-700">
-            Full AI mediation reviews use the opportunity owner's AI mediation review credits.
-          </p>
-        ) : (
-          <p className="text-xs text-amber-700">AI support is disabled for this shared link.</p>
-        )
+        <p className="text-xs text-amber-700">
+          Full AI mediation reviews use the opportunity owner's AI mediation review credits.
+        </p>
       }
       visibleCoachSuggestions={visibleCoachSuggestions}
     />

@@ -159,6 +159,14 @@ test('recipient Run AI Mediation warns about owner credits and surfaces the per-
     ),
     'SharedReport must surface the per-round recipient re-review cap copy',
   );
+  assert.ok(
+    source.includes('This link does not allow additional AI re-reviews. You can still edit and send your response.'),
+    'SharedReport must use additional re-review copy instead of blocking AI mediation generally',
+  );
+  assert.ok(
+    !source.includes('This link does not allow AI mediation.'),
+    'SharedReport must not show the generic AI mediation disabled copy',
+  );
   assert.ok(routeSource.includes('Cache hit = exact same inputs already have a saved successful AI result'));
   assert.ok(routeSource.includes('Cache miss = inputs changed or no saved result exists'));
 });

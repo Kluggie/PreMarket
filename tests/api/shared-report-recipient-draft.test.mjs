@@ -939,7 +939,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('Prompt2 evaluate is auth-protected and permission-gated by can_reevaluate', async () => {
+  test('Prompt2 evaluate requires auth and allows initial review even when can_reevaluate is disabled', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -957,9 +957,9 @@ if (!hasDatabaseUrl()) {
     });
     const disallowedRecipientCookie = makeRecipientCookie('p2_eval_disallowed', 'recipient@example.com');
 
-    const disallowedRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
-    assert.equal(disallowedRes.statusCode, 403);
-    assert.equal(disallowedRes.jsonBody().error.code, 'reevaluation_not_allowed');
+    const disallowedWorkspaceRes = await getRecipientWorkspace(disallowed.token, disallowedRecipientCookie);
+    assert.equal(disallowedWorkspaceRes.statusCode, 200);
+    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_reevaluate, false);
 
     const allowed = await createSharedReportLink(ownerCookie, comparison.id, 'recipient2@example.com', {
       canEdit: true,
@@ -982,6 +982,39 @@ if (!hasDatabaseUrl()) {
     });
 
     try {
+      const saveDisallowedDraftRes = await saveRecipientDraft(disallowed.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient first response is meaningful and should allow initial mediation review even with re-review disabled.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential details for the same first-round mediation review.',
+        },
+        workflow_step: 2,
+      }, disallowedRecipientCookie);
+      assert.equal(saveDisallowedDraftRes.statusCode, 200);
+
+      const disallowedInitialEvaluateRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
+      assert.equal(disallowedInitialEvaluateRes.statusCode, 200);
+
+      const saveDisallowedChangedDraftRes = await saveRecipientDraft(disallowed.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient changed shared input attempts an additional same-round re-review and should be blocked when disabled.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential details updated alongside the changed shared input.',
+        },
+        workflow_step: 2,
+      }, disallowedRecipientCookie);
+      assert.equal(saveDisallowedChangedDraftRes.statusCode, 200);
+
+      const disallowedRereviewRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
+      assert.equal(disallowedRereviewRes.statusCode, 403);
+      assert.equal(disallowedRereviewRes.jsonBody().error.code, 'reevaluation_not_allowed');
+
       const saveAllowedDraftRes = await saveRecipientDraft(allowed.token, {
         shared_payload: {
           label: 'Shared Information',
@@ -1772,8 +1805,8 @@ if (!hasDatabaseUrl()) {
     assert.equal(rejectConfidentialEdit.jsonBody().error.code, 'confidential_edit_not_allowed');
 
     const evaluateRes = await evaluateRecipientDraft(viewOnlyLink.token, {}, recipientCookie);
-    assert.equal(evaluateRes.statusCode, 403);
-    assert.equal(evaluateRes.jsonBody().error.code, 'reevaluation_not_allowed');
+    assert.equal(evaluateRes.statusCode, 409);
+    assert.equal(evaluateRes.jsonBody().error.code, 'recipient_input_required');
 
     const sendBackRes = await sendBackRecipientDraft(viewOnlyLink.token, {}, recipientCookie);
     assert.equal(sendBackRes.statusCode, 403);
@@ -2495,8 +2528,25 @@ if (!hasDatabaseUrl()) {
       }, recipientCookie);
       assert.equal(changedSaveRes.statusCode, 200);
 
-      // Cache miss: inputs changed, so this would require a new model call and
-      // owner review credit. The per-round recipient re-review cap blocks it.
+      // First changed-input re-review is allowed when canReevaluate=true.
+      const secondEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(secondEvaluateRes.statusCode, 200);
+      assert.equal(evaluatorCallCount, 2);
+
+      const secondChangedSaveRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text:
+            'Recipient response applies a second changed-input update in the same round and should exceed the one additional re-review cap.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential notes add commercial boundaries for internal review.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(secondChangedSaveRes.statusCode, 200);
+
       const cappedEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(cappedEvaluateRes.statusCode, 409);
       assert.equal(cappedEvaluateRes.jsonBody()?.error?.code, 'recipient_rereview_limit_reached');
@@ -2504,7 +2554,7 @@ if (!hasDatabaseUrl()) {
         cappedEvaluateRes.jsonBody()?.error?.message,
         'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
       );
-      assert.equal(evaluatorCallCount, 1);
+      assert.equal(evaluatorCallCount, 2);
 
       const workspaceAfterCapRes = await getRecipientWorkspace(link.token, recipientCookie);
       assert.equal(workspaceAfterCapRes.statusCode, 200);
@@ -2522,7 +2572,7 @@ if (!hasDatabaseUrl()) {
             limit 10`,
       );
       const successfulRuns = evalRunRows.rows.filter((row) => row?.result_json?.input_trace);
-      assert.equal(successfulRuns.length, 1);
+      assert.equal(successfulRuns.length, 2);
       const inputTrace = successfulRuns[0]?.result_json?.input_trace || {};
       assert.equal(inputTrace.analysis_stage ?? 'mediation_review', 'mediation_review');
       assert.equal(Boolean(inputTrace.has_meaningful_recipient_content), true);
