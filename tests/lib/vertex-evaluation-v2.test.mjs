@@ -1769,6 +1769,162 @@ test('v2 true incomplete fallback stays minimal and explicitly incomplete when e
   }
 });
 
+test('v2 extraction failure with concrete shared terms should not collapse to unknown or 0.2 confidence', async () => {
+  const badJsonResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: 'still not valid json',
+    finishReason: 'STOP',
+    httpStatus: 200,
+  };
+
+  const cleanup = setVertexV2MockSequence([
+    // Pass A fails despite concrete source material.
+    { throw: new Error('pass-a-failed') },
+    // Pass B attempts both fail to parse.
+    { response: badJsonResponse },
+    { response: badJsonResponse },
+  ]);
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText:
+        'The parties aligned on a six-month pilot scope, agreed milestone payment timing, and narrowed customer attribution to registered referrals, with only final approval routing and data-retention wording still open.',
+      confidentialText: 'Internal notes are present but should not drive public commercial viability.',
+      requestId: 'req-concrete-extraction-fallback-1',
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.notEqual(outcome.data.fit_level, 'unknown', 'concrete raw shared terms should still allow a bounded commercial stance');
+    assert.equal(
+      outcome.data.confidence_0_1 >= 0.45,
+      true,
+      'confidence should be reduced for extraction failure but must not collapse to the incomplete 0.2 floor when shared terms are concrete',
+    );
+    assert.equal(
+      outcome.data.why.some((entry) => /not viable/i.test(entry)),
+      false,
+      'extraction failure alone must not become a commercial non-viability conclusion',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('v2 removes stale open questions already resolved in prior-round context', async () => {
+  const roundContext = buildMediationRoundContext({
+    bilateralRoundNumber: 2,
+    priorBilateralRoundId: 'eval_round_1',
+    priorReport: {
+      analysis_stage: MEDIATION_REVIEW_STAGE,
+      bilateral_round_number: 1,
+      fit_level: 'medium',
+      confidence_0_1: 0.61,
+      why: [
+        'Recommendation: Proceed with conditions once client protection and commission triggers are explicitly documented.',
+      ],
+      missing: [
+        'How long does client protection last?',
+        'When is commission earned and paid?',
+      ],
+      remaining_deltas: [
+        'How long does client protection last?',
+        'When is commission earned and paid?',
+      ],
+      movement_direction: 'stalled',
+    },
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    { response: factSheetResponse() },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          missing: [
+            'How long does client protection last?',
+            'Which legal approver must sign before execution?',
+          ],
+          why: [
+            'Mediation Summary: Client protection is now explicitly set at twelve months, but final approval workflow is still open.',
+            'Decision Readiness: Proceed with conditions after final approver ownership is confirmed.',
+            'Recommended path: Confirm approval owner and execute the narrowed pilot terms.',
+          ],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText:
+        'Accepted introductions are protected for twelve months. Commission is earned after customer payment. Final legal approver is still to be confirmed.',
+      confidentialText: 'Internal context only.',
+      requestId: 'req-stale-open-question-1',
+      mediationRoundContext: roundContext,
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(
+      outcome.data.missing.some((entry) => /how long does client protection last/i.test(entry)),
+      false,
+      'resolved prior-round question should be removed from later-round open questions',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('v2 later-round closeable movement must not return not_viable when only final-papering issues remain', async () => {
+  const cleanup = setVertexV2MockSequence([
+    { response: factSheetResponse() },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'low',
+          confidence_0_1: 0.31,
+          why: [
+            'Mediation Summary: The parties are close on core economics and scope, and can move forward once final documentation points are completed.',
+            'Decision Readiness: Proceed with conditions after legal papering and approval routing are confirmed.',
+            'Recommended path: Finalize documentation mechanics and execute the pilot structure.',
+          ],
+          internal_analysis: validInternalAnalysis({
+            decision_status: 'not_viable',
+            recommendation:
+              'Not viable in its current form despite narrow final-stage documentation gaps.',
+            confidence: 0.31,
+          }),
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText:
+        'The parties confirmed pilot scope, fee structure, KPI baseline, data-use boundaries, and milestone dates. Remaining items are final legal wording and signature routing.',
+      confidentialText: 'Private context stays private.',
+      requestId: 'req-closeable-later-round-1',
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.notEqual(
+      outcome.data.internal_analysis?.decision_status,
+      'not_viable',
+      'closeable later-round records with final-papering gaps should not resolve to not_viable',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 test('schema-rejected provider output records only safe validation diagnostics', async () => {
   const invalidPayload = validPayload({
     narrative: {

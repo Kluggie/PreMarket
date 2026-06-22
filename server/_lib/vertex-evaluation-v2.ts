@@ -3839,6 +3839,79 @@ function sanitizeContinuityIdentifiers(
   );
 }
 
+function extractKeywordSet(value: string) {
+  return new Set(
+    String(value || '')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/g)
+      .filter((entry) => entry.length >= 4),
+  );
+}
+
+function shouldDropResolvedOpenQuestion(
+  question: string,
+  mediationRoundContext?: MediationRoundContext,
+) {
+  const normalizedQuestion = normalizeSpaces(question).toLowerCase();
+  if (!normalizedQuestion) return false;
+  const resolvedIssues = [
+    ...(mediationRoundContext?.prior_review_summary?.prior_resolved_issues || []),
+    ...((mediationRoundContext?.delta_analysis?.issue_changes || []).filter(
+      (issue) =>
+        issue.current_status === 'resolved' ||
+        issue.current_status === 'no_longer_relevant' ||
+        issue.current_status === 'partially_resolved' ||
+        issue.current_status === 'narrowed',
+    ) || []),
+  ];
+  if (resolvedIssues.length === 0) return false;
+
+  const questionKeywords = extractKeywordSet(normalizedQuestion);
+  if (questionKeywords.size === 0) return false;
+  for (const issue of resolvedIssues) {
+    const label = normalizeSpaces(asText((issue as any).label));
+    if (!label) continue;
+    const labelKeywords = extractKeywordSet(label);
+    if (labelKeywords.size === 0) continue;
+    const overlap = [...labelKeywords].filter((keyword) => questionKeywords.has(keyword)).length;
+    if (overlap >= Math.min(2, labelKeywords.size)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function questionLooksAnsweredInSharedText(question: string, sharedText: string) {
+  const normalizedQuestion = normalizeSpaces(question).toLowerCase();
+  const normalizedShared = normalizeSpaces(sharedText).toLowerCase();
+  if (!normalizedQuestion || !normalizedShared) return false;
+
+  const asksDuration = /\b(how long|duration|period|window|term)\b/.test(normalizedQuestion);
+  const asksProtection = /\b(client protection|protection|non-circumvention|non circumvention)\b/.test(normalizedQuestion);
+  const hasDurationAnswer = /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(day|days|week|weeks|month|months|year|years)\b/.test(normalizedShared);
+  if (asksDuration && asksProtection && hasDurationAnswer && /\b(protection|non-circumvention|non circumvention)\b/.test(normalizedShared)) {
+    return true;
+  }
+
+  const questionKeywords = extractKeywordSet(normalizedQuestion);
+  const sharedKeywords = extractKeywordSet(normalizedShared);
+  if (questionKeywords.size === 0 || sharedKeywords.size === 0) return false;
+  const overlap = [...questionKeywords].filter((keyword) => sharedKeywords.has(keyword)).length;
+  return overlap >= Math.min(3, questionKeywords.size);
+}
+
+function hasConcreteSharedFallbackSignal(text: string) {
+  const normalized = normalizeSpaces(asText(text));
+  if (!normalized) return false;
+  const concretePatterns = [
+    /\b\d+(?:\.\d+)?\s*(?:%|days?|weeks?|months?|years?)\b/i,
+    /\b(?:agreed|accepted|confirmed|finalized|set at|earned after|paid after)\b/i,
+    /\b(?:scope|milestone|payment|kpi|approval|signature|retention|commission|attribution|pilot)\b/i,
+  ];
+  const matches = concretePatterns.filter((pattern) => pattern.test(normalized)).length;
+  return matches >= 2 && normalized.length >= 160;
+}
+
 function applyConsistencyCalibration(params: {
   data: VertexEvaluationV2MediationResponse;
   factSheet: ProposalFactSheet;
@@ -3893,6 +3966,18 @@ function applyConsistencyCalibration(params: {
     remaining_deltas = sanitizedProgress.remaining_deltas;
     new_open_issues = sanitizedProgress.new_open_issues;
     capsApplied.push('sanitize_continuity_issue_ids');
+  }
+
+  if (params.mediationRoundContext && missing.length > 0) {
+    const prunedMissing = missing.filter(
+      (entry) =>
+        !shouldDropResolvedOpenQuestion(entry, params.mediationRoundContext) &&
+        !questionLooksAnsweredInSharedText(entry, params.sharedText),
+    );
+    if (prunedMissing.length !== missing.length) {
+      missing = prunedMissing;
+      capsApplied.push('remove_stale_resolved_questions');
+    }
   }
 
   if (params.postProcessMode === 'incomplete_fallback') {
@@ -4065,6 +4150,34 @@ function applyConsistencyCalibration(params: {
     capsApplied.push(
       ...narrativeValidation.warnings.map((warning) => `narrative_validation:${warning}`),
     );
+  }
+
+  if (params.mediationRoundContext && missing.length > 0) {
+    const sharedHasExplicitProtectionDuration =
+      /\b(protected?|protection|non-circumvention|non circumvention)\b/i.test(params.sharedText)
+      && /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(day|days|week|weeks|month|months|year|years)\b/i.test(params.sharedText);
+
+    const finalPrunedMissing = missing.filter((entry) => {
+      if (
+        sharedHasExplicitProtectionDuration
+        && /\b(how long|duration|period|window)\b/i.test(entry)
+        && /\b(client protection|protection|non-circumvention|non circumvention)\b/i.test(entry)
+      ) {
+        return false;
+      }
+      if (shouldDropResolvedOpenQuestion(entry, params.mediationRoundContext)) {
+        return false;
+      }
+      if (questionLooksAnsweredInSharedText(entry, params.sharedText)) {
+        return false;
+      }
+      return true;
+    });
+
+    if (finalPrunedMissing.length !== missing.length) {
+      missing = finalPrunedMissing;
+      capsApplied.push('remove_stale_resolved_questions_final');
+    }
   }
 
   return {
@@ -7819,6 +7932,33 @@ export async function evaluateWithVertexV2(
     mediationRoundContext,
   });
 
+  let fallbackData = fallbackClamped.data;
+  let fallbackCapsApplied = [...fallbackClamped.capsApplied];
+  if (fallback.fallbackMode === 'incomplete' && hasConcreteSharedFallbackSignal(sharedText)) {
+    const fallbackMissing = normalizeMissingQuestions({
+      factSheet,
+      missing: factSheet.missing_info,
+    });
+    const safeMissing = fallbackMissing.length > 0
+      ? fallbackMissing
+      : normalizeMissingQuestions({ factSheet, missing: GENERIC_FALLBACK_MISSING });
+
+    fallbackData = {
+      ...fallbackData,
+      fit_level: 'medium',
+      confidence_0_1: 0.48,
+      why: [
+        'Recommendation: Proceed with conditions because the latest shared terms are commercially concrete, although structured extraction failed in this run.',
+        'Where the Parties Align: The shared record shows specific terms that indicate meaningful narrowing toward an executable structure.',
+        'Where the Deal Is Stuck: Remaining blockers are the unresolved items listed below, not the extraction failure itself.',
+        'Suggested Bridge: Convert the remaining open terms into explicit signature-ready wording and confirm final approvals.',
+        'Next Step: Re-run AI mediation to restore full structured analysis, then finalize the remaining conditions.',
+      ],
+      missing: safeMissing,
+    };
+    fallbackCapsApplied.push('salvage_incomplete_with_concrete_shared_terms');
+  }
+
   const fallbackTelemetry = buildTelemetry({
     sharedText,
     confidentialText,
@@ -7826,21 +7966,21 @@ export async function evaluateWithVertexV2(
     sharedChunks: chunks.sharedChunks,
     confidentialChunks: chunks.confidentialChunks,
     factSheet,
-    evalResult: fallbackClamped.data,
+    evalResult: fallbackData,
     reportStyle,
-    clampsApplied: fallbackClamped.capsApplied,
+    clampsApplied: fallbackCapsApplied,
   });
 
   return {
     ok: true,
-    data: fallbackClamped.data,
+    data: fallbackData,
     attempt_count: attempt,
     model: null,
     generation_model: generationModel,
     _internal: {
       fact_sheet: factSheet,
       coverage_count: computeCoverageCount(factSheet.source_coverage),
-      caps_applied: fallbackClamped.capsApplied,
+      caps_applied: fallbackCapsApplied,
       pass_a_parse_error: passAParseError,
       pass_b_attempt_count: attempt,
       report_style: reportStyle,

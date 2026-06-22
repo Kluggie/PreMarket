@@ -198,3 +198,53 @@ test('issue identity is deterministic across equivalent wording', () => {
     'commission_trigger',
   );
 });
+
+test('later-round diagnostics include current-state deal model and mixed movement when progress and new blockers coexist', () => {
+  const context = laterContext(priorReport({
+    missing: [
+      'How long does client protection last? — determines when an introduced account remains protected.',
+      'When is commission earned and paid? — determines the commercial trigger and payment timing.',
+      'Which internal approval is still required before signature?',
+    ],
+    remaining_deltas: [
+      'How long does client protection last?',
+      'When is commission earned and paid?',
+      'Which internal approval is still required before signature?',
+    ],
+  }));
+  const enriched = enrichMediationRoundContext({
+    mediationRoundContext: context,
+    currentSharedText:
+      'Accepted introductions are protected for twelve months and commission is earned after customer payment. A new board approval requirement was introduced before signature and unresolved compliance wording remains.',
+  });
+
+  assert.equal(typeof enriched.current_state_deal_model, 'object');
+  assert.equal(Array.isArray(enriched.current_state_deal_model?.near_agreed_terms), true);
+  assert.equal(Array.isArray(enriched.current_state_deal_model?.blocking_terms), true);
+  assert.equal(
+    enriched.delta_analysis?.movement_direction,
+    'mixed_movement',
+    'later rounds with both resolved issues and newly introduced blockers must be mixed movement',
+  );
+});
+
+test('later-round delta marks commitment-critical unresolved issues as still blocking instead of generic unchanged', () => {
+  const context = laterContext(priorReport({
+    missing: ['When is commission earned and paid? — determines the commercial trigger and payment timing.'],
+    remaining_deltas: ['When is commission earned and paid?'],
+  }));
+  const enriched = enrichMediationRoundContext({
+    mediationRoundContext: context,
+    currentSharedText:
+      'The parties discussed commission again but still did not define when commission is earned or paid. Signature cannot proceed until this trigger is fixed.',
+  });
+  const change = enriched.delta_analysis.issue_changes.find(
+    (issue) => issue.issue_id === 'commission_trigger',
+  );
+
+  assert.equal(
+    change?.current_status,
+    'still_blocking',
+    'unresolved commitment-critical carry-over issues should be marked still_blocking',
+  );
+});

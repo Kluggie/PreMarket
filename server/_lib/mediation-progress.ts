@@ -1,9 +1,16 @@
-export type MediationMovementDirection = 'converging' | 'stalled' | 'diverging';
+export type MediationMovementDirection =
+  | 'converging'
+  | 'stalled'
+  | 'diverging'
+  | 'mixed_movement'
+  | 'no_material_movement'
+  | 'insufficient_evidence';
 
 export type MediationIssueStatus =
   | 'resolved'
   | 'partially_resolved'
   | 'narrowed'
+  | 'still_blocking'
   | 'unchanged'
   | 'regressed'
   | 'newly_introduced'
@@ -89,6 +96,10 @@ export type MediationRoundContext = {
   prior_movement_direction?: MediationMovementDirection;
   prior_review_summary?: PublicSafePriorReviewSummary;
   delta_analysis?: MediationDeltaAnalysis;
+  current_state_deal_model?: {
+    near_agreed_terms: string[];
+    blocking_terms: string[];
+  };
 };
 
 function asText(value: unknown) {
@@ -528,9 +539,20 @@ function clampConfidence(value: unknown) {
 
 function normalizeMovementDirection(value: unknown): MediationMovementDirection | undefined {
   const normalized = normalizeText(value).toLowerCase();
-  if (normalized === 'converging' || normalized === 'stalled' || normalized === 'diverging') {
+  if (
+    normalized === 'converging' ||
+    normalized === 'stalled' ||
+    normalized === 'diverging' ||
+    normalized === 'mixed_movement' ||
+    normalized === 'no_material_movement' ||
+    normalized === 'insufficient_evidence'
+  ) {
     return normalized;
   }
+  if (normalized === 'mixed' || normalized === 'mixed movement') return 'mixed_movement';
+  if (normalized === 'closer to agreement') return 'converging';
+  if (normalized === 'further from agreement') return 'diverging';
+  if (normalized === 'no movement' || normalized === 'no material movement') return 'no_material_movement';
   return undefined;
 }
 
@@ -961,6 +983,18 @@ function classifyPriorIssue(
     return 'resolved';
   }
 
+  if (
+    /\b(?:still did not|still does not|still not|still unresolved|remains unresolved|remains open|cannot proceed|cannot sign|before signature|still needs agreement)\b/i.test(
+      evidenceText,
+    ) &&
+    (
+      dimension?.patterns.some((pattern) => pattern.test(lower)) ||
+      keywordOverlap(`${issue.label} ${issue.question || ''}`, evidenceText) >= 0.5
+    )
+  ) {
+    return 'still_blocking';
+  }
+
   const concreteSignal =
     /\b\d+(?:\.\d+)?\s*(?:%|days?|weeks?|months?|years?)\b/i.test(evidenceText) ||
     /\b(?:will|must|shall|is responsible for|owned by|handled by|provided by|retained by|paid to)\b/i.test(
@@ -1070,17 +1104,22 @@ function buildDeltaAnalysis(params: {
   const partial = allChanges.filter((entry) =>
     entry.current_status === 'partially_resolved' || entry.current_status === 'narrowed',
   );
+  const stillBlocking = allChanges.filter((entry) => entry.current_status === 'still_blocking');
   const unchanged = allChanges.filter((entry) =>
-    entry.current_status === 'unchanged' || entry.current_status === 'unclear',
+    entry.current_status === 'unchanged' || entry.current_status === 'unclear' || entry.current_status === 'still_blocking',
   );
   const regressed = allChanges.filter((entry) => entry.current_status === 'regressed');
   const superseded = allChanges.filter((entry) => entry.current_status === 'superseded');
   const movementDirection: MediationMovementDirection =
-    regressed.length > 0 || newIssues.length > resolved.length + partial.length
-      ? 'diverging'
-      : resolved.length > 0 || partial.length > 0
-        ? 'converging'
-        : 'stalled';
+    !comparisonText
+      ? 'insufficient_evidence'
+      : (resolved.length > 0 || partial.length > 0) && (newIssues.length > 0 || regressed.length > 0 || stillBlocking.length > 0)
+        ? 'mixed_movement'
+        : regressed.length > 0 || newIssues.length > resolved.length + partial.length
+          ? 'diverging'
+          : resolved.length > 0 || partial.length > 0
+            ? 'converging'
+            : 'no_material_movement';
   const movedLabels = [...resolved, ...partial].map((entry) => entry.label).slice(0, 2);
   const openLabels = [...unchanged, ...regressed].map((entry) => entry.label).slice(0, 2);
   const newLabels = newIssues.map((entry) => entry.label).slice(0, 2);
@@ -1089,7 +1128,11 @@ function buildDeltaAnalysis(params: {
       ? `The shared record shows progress on ${joinNatural(movedLabels)}, while ${joinNatural(openLabels) || 'some prior issues'} still needs resolution.`
       : movementDirection === 'diverging'
         ? `The latest shared material introduces or worsens ${joinNatural(newLabels.length ? newLabels : regressed.map((entry) => entry.label))}.`
-        : `The current shared record does not materially resolve ${joinNatural(openLabels) || 'the prior open issues'}.`;
+        : movementDirection === 'mixed_movement'
+          ? `The shared record closes some issues (${joinNatural(movedLabels) || 'partial progress'}) but introduces or keeps blockers around ${joinNatural([...newLabels, ...stillBlocking.map((entry) => entry.label)].slice(0, 2)) || 'remaining terms'}.`
+          : movementDirection === 'insufficient_evidence'
+            ? 'The current shared record is too sparse to determine reliable movement since the prior round.'
+            : `The current shared record does not materially resolve ${joinNatural(openLabels) || 'the prior open issues'}.`;
 
   return {
     ...(summary.prior_round_number
@@ -1122,9 +1165,23 @@ export function enrichMediationRoundContext(params: {
     currentSharedText: params.currentSharedText,
     retrievedEvidencePacket: params.retrievedEvidencePacket,
   });
+  const sentenceParts = normalizeText(params.currentSharedText)
+    .split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9])/g)
+    .map((entry) => normalizeText(entry))
+    .filter(Boolean);
+  const nearAgreedTerms = uniqueText(
+    sentenceParts.filter((entry) => /\b(?:agreed|accepted|confirmed|set at|earned after|applies for|finalized)\b/i.test(entry)),
+  ).slice(0, 6);
+  const blockingTerms = uniqueText(
+    sentenceParts.filter((entry) => /\b(?:remains open|still unresolved|cannot proceed|cannot sign|before signature|requires approval|still needs)\b/i.test(entry)),
+  ).slice(0, 6);
   return {
     ...context,
     ...(deltaAnalysis ? { delta_analysis: deltaAnalysis } : {}),
+    current_state_deal_model: {
+      near_agreed_terms: nearAgreedTerms,
+      blocking_terms: blockingTerms,
+    },
   } satisfies MediationRoundContext;
 }
 
