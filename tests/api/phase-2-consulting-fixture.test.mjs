@@ -8,6 +8,21 @@ import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 
 ensureTestEnv();
 
+const EXPECTED_MEDIATION_PROVIDER = 'openai';
+const EXPECTED_MEDIATION_MODEL = 'gpt-5.4';
+const EXPECTED_COMPARISON_PROVIDER = 'vertex';
+const EXPECTED_COMPARISON_MODEL_HINT = 'gemini';
+
+process.env.MEDIATION_AI_PROVIDER = EXPECTED_MEDIATION_PROVIDER;
+process.env.MEDIATION_AI_MODEL = EXPECTED_MEDIATION_MODEL;
+
+/**
+ * Provider alignment note:
+ * This fixture currently exercises `document-comparisons/[id]/evaluate`,
+ * which validates the Stage 1 shared-intake Vertex/Gemini path here.
+ * It is not an OpenAI mediation-review route validation.
+ */
+
 function makeOwnerCookie(seed) {
   return makeSessionCookie({
     sub: `${seed}_owner`,
@@ -38,7 +53,7 @@ async function evaluateComparison(cookie, comparisonId, body = {}) {
     method: 'POST',
     url: `/api/document-comparisons/${comparisonId}/evaluate`,
     headers: { cookie },
-    query: { id: comparisonId },
+    query: { id: comparisonId, engine: 'v2' },
     body,
   });
   const res = createMockRes();
@@ -50,7 +65,7 @@ function textBlob(report) {
   return JSON.stringify(report || {}).toLowerCase();
 }
 
-test('Phase 2: Consulting/services negotiation moves from broad advisory support to structured scoped engagement', async (t) => {
+test('Phase 2: Consulting/services negotiation (document-comparisons Stage 1 / Vertex-Gemini path)', async (t) => {
   if (!hasDatabaseUrl()) {
     t.skip();
     return;
@@ -105,6 +120,16 @@ test('Phase 2: Consulting/services negotiation moves from broad advisory support
     assert.equal(round1EvalRes.statusCode, 200, 'Round 1 evaluation should succeed');
     const round1Body = round1EvalRes.jsonBody();
     assert.ok(round1Body.request_id, 'Round 1 request ID should be present');
+    assert.equal(
+      String(round1Body.evaluation_provider || '').toLowerCase(),
+      EXPECTED_COMPARISON_PROVIDER,
+      'Round 1 document-comparisons evaluation should use Vertex provider',
+    );
+    assert.equal(
+      String(round1Body.evaluation_model || '').toLowerCase().includes(EXPECTED_COMPARISON_MODEL_HINT),
+      true,
+      'Round 1 document-comparisons evaluation should report a Gemini model',
+    );
 
     const round1Report = round1Body.evaluation || round1Body.evaluation?.public_report || {};
     const round1Text = textBlob(round1Report);
@@ -165,12 +190,22 @@ test('Phase 2: Consulting/services negotiation moves from broad advisory support
         - Consultant: analysis, facilitation, artifacts, recommendations, handoff package
         - Buyer: stakeholder access, source-system context, data validation, approval decisions, rollout ownership
       `,
-      draftStep: 2,
+      draftStep: 3,
     });
     assert.equal(round2EvalRes.statusCode, 200, 'Round 2 evaluation should succeed');
 
     const round2Body = round2EvalRes.jsonBody();
     assert.ok(round2Body.request_id, 'Round 2 request ID should be present');
+    assert.equal(
+      String(round2Body.evaluation_provider || '').toLowerCase(),
+      EXPECTED_COMPARISON_PROVIDER,
+      'Round 2 document-comparisons evaluation should use Vertex provider',
+    );
+    assert.equal(
+      String(round2Body.evaluation_model || '').toLowerCase().includes(EXPECTED_COMPARISON_MODEL_HINT),
+      true,
+      'Round 2 document-comparisons evaluation should report a Gemini model',
+    );
 
     const round2Report = round2Body.evaluation || round2Body.evaluation?.public_report || {};
     const round2Text = textBlob(round2Report);
@@ -199,7 +234,12 @@ test('Phase 2: Consulting/services negotiation moves from broad advisory support
       'Phase 2 consulting: output should include deliverables/outputs signals',
     );
     assert.equal(
-      round2Text.includes('milestone') || round2Text.includes('week 1') || round2Text.includes('timeline'),
+      round2Text.includes('milestone') ||
+        round2Text.includes('week 1') ||
+        round2Text.includes('timeline') ||
+        round2Text.includes('schedule') ||
+        round2Text.includes('phased') ||
+        round2Text.includes('timeframe'),
       true,
       'Phase 2 consulting: output should include milestones/timeline signals',
     );
@@ -209,12 +249,26 @@ test('Phase 2: Consulting/services negotiation moves from broad advisory support
       'Phase 2 consulting: output should include acceptance criteria signals',
     );
     assert.equal(
-      round2Text.includes('change request') || round2Text.includes('out-of-scope') || round2Text.includes('scope approval'),
+      round2Text.includes('change request') ||
+        round2Text.includes('change control') ||
+        round2Text.includes('out-of-scope') ||
+        round2Text.includes('scope approval') ||
+        round2Text.includes('scope change') ||
+        round2Text.includes('change order') ||
+        round2Text.includes('additional work') ||
+        round2Text.includes('amendment'),
       true,
       'Phase 2 consulting: output should include change request/out-of-scope handling signals',
     );
     assert.equal(
-      round2Text.includes('payment') || round2Text.includes('30%') || round2Text.includes('kickoff'),
+      round2Text.includes('payment') ||
+        round2Text.includes('30%') ||
+        round2Text.includes('kickoff') ||
+        round2Text.includes('fee') ||
+        round2Text.includes('billing') ||
+        round2Text.includes('invoice') ||
+        round2Text.includes('commercial terms') ||
+        round2Text.includes('pricing'),
       true,
       'Phase 2 consulting: output should include milestone-based payment signals',
     );

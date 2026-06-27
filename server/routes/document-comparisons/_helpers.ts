@@ -2485,7 +2485,7 @@ export function buildStoredV2Evaluation(
       summary: presentation.primary_insight || basisNote || SHARED_INTAKE_SUMMARY_TITLE,
       report,
       evaluation_provider: evaluationProvider,
-      evaluation_model: generationModel,
+      evaluation_model: providerModel,
       evaluation_provider_model: providerModel,
       evaluation_provider_reason: null,
       evaluator_family: 'stage1_shared_intake',
@@ -2596,7 +2596,7 @@ export function buildStoredV2Evaluation(
       summary: presentation.primary_insight || sendReadinessSummary || PRE_SEND_REVIEW_TITLE,
       report,
       evaluation_provider: evaluationProvider,
-      evaluation_model: generationModel,
+      evaluation_model: providerModel,
       evaluation_provider_model: providerModel,
       evaluation_provider_reason: null,
     };
@@ -2714,7 +2714,7 @@ export function buildStoredV2Evaluation(
     summary: presentation.primary_insight || why[0] || 'AI mediation review complete',
     report,
     evaluation_provider: evaluationProvider,
-    evaluation_model: generationModel,
+    evaluation_model: providerModel,
     evaluation_provider_model: providerModel,
     evaluation_provider_reason: null,
   };

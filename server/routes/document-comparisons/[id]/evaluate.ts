@@ -2301,7 +2301,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       comparison: mapComparisonRow(updated),
       evaluation: evaluation.report,
       evaluation_provider:
-        asText(evaluation?.evaluation_provider) || (asLower(evaluation?.provider) === 'vertex' ? 'vertex' : 'fallback'),
+        asText(evaluation?.evaluation_provider) ||
+        (asLower(evaluation?.provider) === 'openai'
+          ? 'openai'
+          : asLower(evaluation?.provider) === 'vertex'
+            ? 'vertex'
+            : 'fallback'),
       evaluation_model: asText(evaluation?.evaluation_model || evaluation?.model) || null,
       evaluation_provider_reason: asText(evaluation?.evaluation_provider_reason || evaluation?.fallbackReason) || null,
       proposal: proposalSummary,

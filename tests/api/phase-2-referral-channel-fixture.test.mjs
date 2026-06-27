@@ -12,6 +12,154 @@ import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 
 ensureTestEnv();
 
+const EXPECTED_MEDIATION_PROVIDER = 'openai';
+const EXPECTED_MEDIATION_MODEL = 'gpt-5.4';
+
+process.env.MEDIATION_AI_PROVIDER = EXPECTED_MEDIATION_PROVIDER;
+process.env.MEDIATION_AI_MODEL = EXPECTED_MEDIATION_MODEL;
+
+function mockOpenAIV2Call(mockFn) {
+  const previous = globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__;
+  globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__ = mockFn;
+  return () => {
+    if (previous === undefined) {
+      delete globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__;
+    } else {
+      globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__ = previous;
+    }
+  };
+}
+
+function buildReferralOpenAIV2Mock() {
+  return async ({ prompt, preferredModel }) => {
+    const normalizedPrompt = String(prompt || '');
+    const model = String(preferredModel || EXPECTED_MEDIATION_MODEL);
+    const isLeakVerifierPrompt = normalizedPrompt.includes('strict security auditor');
+    if (isLeakVerifierPrompt) {
+      return {
+        model,
+        text: JSON.stringify({
+          leak: false,
+          reason: 'No confidential material appears in the response.',
+        }),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+
+    const isPassBPrompt =
+      normalizedPrompt.includes('Required JSON schema (top-level evaluation keys required') ||
+      normalizedPrompt.includes('INITIAL REPORT TO REFINE:');
+    const isLaterBilateralRound =
+      normalizedPrompt.includes('prior_bilateral_context') ||
+      normalizedPrompt.includes('"current_bilateral_round_number": 2');
+
+    if (!isPassBPrompt) {
+      return {
+        model,
+        text: JSON.stringify({
+          project_goal: 'Agree a referral partnership with registered attribution instead of broad exclusivity.',
+          scope_deliverables: [
+            'Registered-referral process',
+            'Commission payment terms',
+            'Client attribution and protection rules',
+          ],
+          timeline: {
+            start: 'After signature',
+            duration: '2-year agreement with annual renewal',
+            milestones: ['Referral registration launch', 'Quarterly business review cadence'],
+          },
+          constraints: [
+            'No broad territory exclusivity outside registered prospects.',
+            'Commission entitlement must be documented and dispute-ready.',
+          ],
+          success_criteria_kpis: [
+            'Registered referrals are accepted through a documented process.',
+            'Commission payment timing and attribution evidence are contractable.',
+          ],
+          vendor_preferences: [],
+          assumptions: [
+            'Both sides still want an active channel relationship with recurring commissions.',
+          ],
+          risks: [
+            {
+              risk: 'Unclear referral attribution could trigger commission disputes.',
+              impact: 'high',
+              likelihood: 'med',
+            },
+          ],
+          open_questions: [
+            'How is a referral formally registered and timestamped?',
+            'What evidence resolves commission disputes or attribution challenges?',
+          ],
+          missing_info: [
+            'Referral registration mechanics and commission-attribution evidence remain open.',
+          ],
+          source_coverage: {
+            has_scope: true,
+            has_timeline: true,
+            has_kpis: true,
+            has_constraints: true,
+            has_risks: true,
+          },
+        }),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+
+    if (!isLaterBilateralRound) {
+      return {
+        model,
+        text: JSON.stringify({
+          analysis_stage: 'mediation_review',
+          fit_level: 'medium',
+          confidence_0_1: 0.67,
+          why: [
+            'Recommendation: Proceed with conditions because both sides support an ongoing referral relationship, but the current draft still leaves exclusivity scope, referral registration mechanics, and commission entitlement exposed to dispute.',
+            'Where the Parties Align: They appear aligned on a recurring commission structure, interest in co-sell support, and the basic idea that qualified referrals should be rewarded over time.',
+            'Where the Deal Is Stuck: Broad territory exclusivity, unclear qualified-prospect rules, and ambiguous client attribution create too much room for later disagreement about who owns the referral and when commission is earned.',
+            'Suggested Bridge: Replace broad exclusivity with a registered-referral model, define what counts as a qualified prospect, and document the evidence trail for attribution, payment timing, and dispute resolution.',
+            'Next Step: Confirm registration mechanics, attribution evidence, and commission-trigger language so the parties can keep the relationship flexible without sacrificing referral protection.',
+          ],
+          missing: [
+            'How is a registered referral submitted and time-stamped? — determines whether attribution can be enforced without exclusivity.',
+            'What evidence resolves commission disputes or client-attribution overlap? — determines whether payment entitlement is contractable.',
+            'What exact criteria define a qualified prospect? — determines when the recurring commission is earned.',
+          ],
+          redactions: [],
+        }),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+
+    return {
+      model,
+      text: JSON.stringify({
+        analysis_stage: 'mediation_review',
+        fit_level: 'high',
+        confidence_0_1: 0.82,
+        why: [
+          'Recommendation: Proceed with conditions because the later-round revisions have addressed the broad exclusivity dispute and converted the deal into a more workable registered-referral structure, with only attribution proof and payment operations left to close.',
+          'Where the Parties Align: They now appear aligned on no broad exclusivity, a 15% recurring commission, a shorter termination window, and a documented co-sell relationship with implementation access.',
+          'Where the Deal Is Stuck: The remaining friction is no longer territory control. It is now about referral registration evidence, qualified-prospect thresholds, commission payment timing, and how attribution disputes are resolved when multiple channels touch the same account.',
+          'Suggested Bridge: Keep the registered-referral compromise, define the exact registration workflow, spell out attribution evidence in the CRM, and record the payment timetable and dispute window tied to commission calculations.',
+          'Next Step: Finalize the registration form, attribution proof standard, qualified-referral definition, and monthly commission-payment process so the revised structure can be executed cleanly.',
+        ],
+        missing: [
+          'What exact registration record locks in attribution for a referred account? — determines whether the registered-referral compromise is enforceable.',
+          'What evidence and timing govern commission payment after a referral closes? — determines whether payment entitlement is operationally clear.',
+          'How are qualified-referral disputes escalated and resolved? — determines whether the parties can manage overlap without reopening exclusivity.',
+        ],
+        redactions: [],
+      }),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+}
+
 function makeOwnerCookie(seed) {
   return makeSessionCookie({
     sub: `${seed}_owner`,
@@ -78,7 +226,7 @@ async function evaluateRecipientDraft(token, recipientCookie) {
     method: 'POST',
     url: `/api/shared-report/${token}/evaluate`,
     headers: { cookie: recipientCookie },
-    query: { token },
+    query: { token, engine: 'v2' },
     body: {},
   });
   const res = createMockRes();
@@ -99,8 +247,23 @@ async function sendBackRecipientDraft(token, recipientCookie) {
   return res;
 }
 
+async function getSharedReportEvaluationDiagnostics(evaluationId) {
+  const db = getDb();
+  const rows = await db.execute(
+    sql`select result_json
+        from shared_report_evaluation_runs
+        where id = ${evaluationId}
+        limit 1`,
+  );
+  return rows.rows[0]?.result_json?.evaluation_diagnostics || {};
+}
+
 /**
  * Phase 2 Fixture: Referral/Channel Partnership
+ *
+ * Provider alignment note:
+ * This fixture exercises `shared-report/[token]/evaluate` mediation review,
+ * and validates OpenAI / gpt-5.4 behavior when provider is configured.
  *
  * Tests negotiation around referral attribution, commission structure, exclusivity,
  * and client ownership. Exercises distinct mediation patterns vs. SaaS/demand-forecasting:
@@ -108,7 +271,7 @@ async function sendBackRecipientDraft(token, recipientCookie) {
  * - Stale question pruning around exclusivity (resolved) + refreshed attribution questions
  * - Landing zone specific to referral mechanics (commission rate, vesting, protection period)
  */
-test('Phase 2: Referral/channel partnership negotiation with movement from exclusivity to registered-referral', async (t) => {
+test('Phase 2: Referral/channel mediation (shared-report OpenAI/gpt-5.4 path)', async (t) => {
   if (!hasDatabaseUrl()) {
     t.skip();
     return;
@@ -118,8 +281,10 @@ test('Phase 2: Referral/channel partnership negotiation with movement from exclu
   await ensureMigrated();
 
   const proposerCookie = makeOwnerCookie('phase2_referral_channel');
+  const proposerEmail = 'phase2_referral_channel_owner@example.com';
   const recipientEmail = 'partner@test.com';
   const recipientCookie = makeRecipientCookie('phase2_referral_channel', recipientEmail);
+  const restoreOpenAICall = mockOpenAIV2Call(buildReferralOpenAIV2Mock());
 
   try {
     // ─── Round 1: Initial referral partnership proposal ────────────────
@@ -214,6 +379,17 @@ test('Phase 2: Referral/channel partnership negotiation with movement from exclu
 
     const round1Body = round1EvalRes.jsonBody();
     assert.ok(round1Body.evaluation_id, 'Evaluation ID should be present');
+    const round1Diagnostics = await getSharedReportEvaluationDiagnostics(round1Body.evaluation_id);
+    assert.equal(
+      String(round1Diagnostics.provider || '').toLowerCase(),
+      EXPECTED_MEDIATION_PROVIDER,
+      'Round 1 shared-report evaluate should use OpenAI mediation provider (not Vertex default)',
+    );
+    assert.equal(
+      String(round1Diagnostics.model || '').toLowerCase().includes(EXPECTED_MEDIATION_MODEL),
+      true,
+      `Round 1 shared-report evaluate should report ${EXPECTED_MEDIATION_MODEL} as mediation model`,
+    );
 
     const round1Report = round1Body.evaluation?.public_report || {};
 
@@ -233,16 +409,15 @@ test('Phase 2: Referral/channel partnership negotiation with movement from exclu
 
     console.log('✅ Round 1 evaluation completed');
     // ─── Round 2: exchange continuation via send-back return link ─────────
-    let round2Token = '';
-    let sendRes = await sendBackRecipientDraft(token, recipientCookie);
-    if (sendRes.statusCode !== 200) {
-      // Some environments only allow send-back under owner auth.
-      sendRes = await sendBackRecipientDraft(token, proposerCookie);
-    }
-    if (sendRes.statusCode === 200) {
-      const sendBody = sendRes.jsonBody() || {};
-      round2Token = String(sendBody.return_link?.token || sendBody.returnLinkToken || '');
-    }
+    const sendRes = await sendBackRecipientDraft(token, recipientCookie);
+    assert.equal(sendRes.statusCode, 200, 'Round 1 send-back should succeed for invited recipient');
+    const sendBody = sendRes.jsonBody() || {};
+    assert.equal(
+      String(sendBody.return_link?.recipient_email || ''),
+      proposerEmail,
+      'Round 2 return link should hand control back to the proposer email',
+    );
+    const round2Token = String(sendBody.return_link?.token || sendBody.returnLinkToken || '');
     assert.notEqual(round2Token, '', 'Round 2 token should be present after send-back');
 
     const round2Payload = {
@@ -285,23 +460,26 @@ test('Phase 2: Referral/channel partnership negotiation with movement from exclu
       workflow_step: 2,
     };
 
-    let round2SaveRes = await saveRecipientDraft(round2Token, proposerCookie, round2Payload);
-    let round2EvalCookie = proposerCookie;
-    if (round2SaveRes.statusCode >= 500) {
-      round2SaveRes = await saveRecipientDraft(round2Token, proposerCookie, round2Payload);
-    }
-    if (round2SaveRes.statusCode !== 200) {
-      round2SaveRes = await saveRecipientDraft(round2Token, recipientCookie, round2Payload);
-      round2EvalCookie = recipientCookie;
-    }
+    const round2SaveRes = await saveRecipientDraft(round2Token, proposerCookie, round2Payload);
     assert.equal(round2SaveRes.statusCode, 200, 'Round 2 draft save should succeed');
 
     // Evaluate Round 2 (later-round mediation)
-    const round2EvalRes = await evaluateRecipientDraft(round2Token, round2EvalCookie);
+    const round2EvalRes = await evaluateRecipientDraft(round2Token, proposerCookie);
     assert.equal(round2EvalRes.statusCode, 200, 'Round 2 evaluation should succeed');
 
     const round2Body = round2EvalRes.jsonBody();
     assert.ok(round2Body.evaluation_id, 'Round 2 evaluation ID should be present');
+    const round2Diagnostics = await getSharedReportEvaluationDiagnostics(round2Body.evaluation_id);
+    assert.equal(
+      String(round2Diagnostics.provider || '').toLowerCase(),
+      EXPECTED_MEDIATION_PROVIDER,
+      'Round 2 shared-report evaluate should use OpenAI mediation provider (not Vertex default)',
+    );
+    assert.equal(
+      String(round2Diagnostics.model || '').toLowerCase().includes(EXPECTED_MEDIATION_MODEL),
+      true,
+      `Round 2 shared-report evaluate should report ${EXPECTED_MEDIATION_MODEL} as mediation model`,
+    );
 
     const round2Report = round2Body.evaluation?.public_report || {};
     const round2Summary = String(round2Report.executive_summary || round2Report.why || []).toLowerCase();
@@ -396,5 +574,7 @@ test('Phase 2: Referral/channel partnership negotiation with movement from exclu
   } catch (error) {
     console.error('Phase 2 referral/channel fixture error:', error.message);
     throw error;
+  } finally {
+    restoreOpenAICall();
   }
 });

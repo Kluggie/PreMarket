@@ -21,8 +21,20 @@ Optional:
 - `RESEND_FROM_NAME`
 - `RESEND_REPLY_TO` (must be an email address, never an API key)
 - `DEV_EMAIL_SINK` (non-production safety sink in `EMAIL_MODE=transactional`)
+- `MEDIATION_AI_PROVIDER` for V2 mediation-review provider selection (`openai` to enable OpenAI path; any other value or unset defaults to Vertex path)
+- `MEDIATION_AI_MODEL` OpenAI mediation model override when `MEDIATION_AI_PROVIDER=openai` (default `gpt-5.4`)
 - `MEDIATION_STEP2_AI_PROVIDER=openai` for Opportunity Workspace Step 2 suggestions
 - `MEDIATION_STEP2_AI_MODEL=gpt-5.4` for Opportunity Workspace Step 2 suggestions; this path uses OpenAI/ChatGPT 5.4 and does not call Vertex/Gemini
+
+## AI Provider Routing
+
+- OpenAI mediation path is enabled only when `MEDIATION_AI_PROVIDER=openai`.
+- If `MEDIATION_AI_PROVIDER` is unset (or any value other than `openai`), mediation defaults to Vertex.
+- `MEDIATION_AI_MODEL` is read only for the OpenAI mediation path; when unset, default model is `gpt-5.4`.
+
+Current route responsibilities:
+- `server/routes/document-comparisons/[id]/evaluate.ts`: document-comparison and Stage 1 shared-intake path (current Phase 2 SaaS/consulting fixtures validate this Vertex/Gemini path).
+- `server/routes/shared-report/[token]/evaluate.ts`: shared-recipient mediation-review path (uses OpenAI/`gpt-5.4` when `MEDIATION_AI_PROVIDER=openai`).
 
 ## Contact + Sales Email Mapping
 
