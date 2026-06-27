@@ -8,6 +8,11 @@ import { readJsonBody } from '../../_lib/http.js';
 import { newId, newToken } from '../../_lib/ids.js';
 import { appendProposalHistory } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import {
+  getRecipientAiReviewEnabled,
+  mergeRecipientAiReviewIntoReportMetadata,
+  readRecipientAiReviewEnabledFromBody,
+} from '../../_lib/shared-link-review-permissions.js';
 import { recordInitialSharedReportBaseline } from '../../_lib/shared-report-history.js';
 
 function asText(value: unknown) {
@@ -77,6 +82,7 @@ function mapSharedReportLink(row: any, comparisonId: string | null, deliveries: 
     can_edit: Boolean(row.canEdit),
     can_edit_confidential: Boolean(row.canEditConfidential),
     can_reevaluate: Boolean(row.canReevaluate),
+    allow_recipient_ai_review: getRecipientAiReviewEnabled(row),
     can_send_back: Boolean(row.canSendBack),
     max_uses: row.maxUses,
     uses: row.uses,
@@ -244,6 +250,7 @@ export default async function handler(req: any, res: any) {
       body.canReevaluate === undefined && body.can_reevaluate === undefined
         ? false
         : Boolean(body.canReevaluate ?? body.can_reevaluate);
+    const allowRecipientAiReview = readRecipientAiReviewEnabledFromBody(body, false);
     const canSendBack =
       body.canSendBack === undefined && body.can_send_back === undefined
         ? true
@@ -277,10 +284,10 @@ export default async function handler(req: any, res: any) {
         lastUsedAt: null,
         expiresAt,
         idempotencyKey: null,
-        reportMetadata: {
+        reportMetadata: mergeRecipientAiReviewIntoReportMetadata({
           workflow: 'single_shared_report',
           comparison_id: comparison.id,
-        },
+        }, allowRecipientAiReview),
         createdAt: now,
         updatedAt: now,
       })

@@ -87,6 +87,7 @@ if (!hasDatabaseUrl()) {
     );
 
     assert.equal(createdShare.sharedReport?.can_reevaluate, false);
+    assert.equal(createdShare.sharedReport?.allow_recipient_ai_review, false);
   });
 
   test('evaluation uses confidential context while shared token response remains recipient-safe', async () => {

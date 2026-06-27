@@ -141,13 +141,21 @@ test('recipient Step 3 review package has Run AI Mediation action', async () => 
   );
 });
 
-test('recipient Run AI Mediation warns about owner credits and surfaces the per-round cap copy', async () => {
+test('recipient Run AI Mediation warns about owner credits and surfaces disabled plus per-round cap copy', async () => {
   const source = await readFile(SHARED_REPORT_PATH, 'utf8');
   const routeSource = await readFile(SHARED_REPORT_EVALUATE_ROUTE_PATH, 'utf8');
 
   assert.ok(
     source.includes("This will use the opportunity owner's AI mediation review credits."),
     'Recipient-triggered mediation must warn that owner credits will be used',
+  );
+  assert.ok(
+    source.includes('recipient_ai_review_not_enabled'),
+    'SharedReport must map the recipient AI review enablement code',
+  );
+  assert.ok(
+    source.includes('The proposal owner has not enabled recipient AI reviews for this link.'),
+    'SharedReport must surface the disabled-by-owner copy for recipient AI reviews',
   );
   assert.ok(
     source.includes('recipient_rereview_limit_reached'),
@@ -158,14 +166,6 @@ test('recipient Run AI Mediation warns about owner credits and surfaces the per-
       'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
     ),
     'SharedReport must surface the per-round recipient re-review cap copy',
-  );
-  assert.ok(
-    source.includes('This link does not allow additional AI re-reviews. You can still edit and send your response.'),
-    'SharedReport must use additional re-review copy instead of blocking AI mediation generally',
-  );
-  assert.ok(
-    !source.includes('This link does not allow AI mediation.'),
-    'SharedReport must not show the generic AI mediation disabled copy',
   );
   assert.ok(routeSource.includes('Cache hit = exact same inputs already have a saved successful AI result'));
   assert.ok(routeSource.includes('Cache miss = inputs changed or no saved result exists'));

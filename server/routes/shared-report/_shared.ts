@@ -5,6 +5,7 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { newId } from '../../_lib/ids.js';
 import { PRIVATE_SENDER_LABEL } from '../../_lib/private-mode.js';
 import { clientIpForRateLimit } from '../../_lib/security.js';
+import { getRecipientAiReviewEnabled } from '../../_lib/shared-link-review-permissions.js';
 import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
 
 export const SHARED_REPORT_ROUTE = '/api/shared-report/[token]';
@@ -255,6 +256,7 @@ export function buildShareView(link: any) {
       can_edit_shared: Boolean(link.canEdit),
       can_edit_confidential: Boolean(link.canEditConfidential),
       can_reevaluate: Boolean(link.canReevaluate),
+      can_run_ai_review: getRecipientAiReviewEnabled(link),
       can_send_back: Boolean(link.canSendBack),
     },
   };

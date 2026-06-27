@@ -78,6 +78,7 @@ async function createSharedReportLink(cookie, comparisonId, recipientEmail, over
     body: {
       comparisonId,
       recipientEmail,
+      allowRecipientAiReview: true,
       ...overrides,
     },
   });

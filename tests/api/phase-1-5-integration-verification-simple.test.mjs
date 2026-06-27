@@ -52,6 +52,7 @@ async function createSharedReportLink(cookie, comparisonId, recipientEmail) {
     body: {
       comparisonId,
       recipientEmail,
+      allowRecipientAiReview: true,
     },
   });
   const res = createMockRes();

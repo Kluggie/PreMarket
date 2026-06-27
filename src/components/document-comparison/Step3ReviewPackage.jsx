@@ -177,6 +177,8 @@ export default function Step3ReviewPackage({
   onRunEvaluation,
   runActionLabel = '',
   runActionTestId = 'step2-run-evaluation-button',
+  runActionDisabled = false,
+  runActionDisabledMessage = '',
   actionButtonClassName = 'bg-blue-600 hover:bg-blue-700',
   footerNote = null,
   evaluationFailureMessage = '',
@@ -309,6 +311,15 @@ export default function Step3ReviewPackage({
         </Alert>
       ) : null}
 
+      {runActionDisabledMessage ? (
+        <Alert className="bg-amber-50 border-amber-200">
+          <AlertTriangle className="h-4 w-4 text-amber-700" />
+          <AlertDescription className="text-amber-900">
+            {runActionDisabledMessage}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {/* Privacy reminder */}
       <Alert className="bg-blue-50 border-blue-200">
         <Lock className="h-4 w-4 text-blue-600" />
@@ -367,7 +378,7 @@ export default function Step3ReviewPackage({
         <Button
           type="button"
           onClick={onRunEvaluation}
-          disabled={isRunning || exceedsAnySizeLimit || !hasContent}
+          disabled={isRunning || exceedsAnySizeLimit || !hasContent || runActionDisabled}
           className={actionButtonClassName}
           data-testid={runActionTestId}
         >

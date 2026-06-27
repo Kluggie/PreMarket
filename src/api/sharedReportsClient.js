@@ -135,6 +135,16 @@ export const sharedReportsClient = {
     };
   },
 
+  async update(token, input = {}) {
+    const response = await request(`/api/sharedReports/${encodeToken(token)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      sharedReport: response.sharedReport || null,
+    };
+  },
+
   async getRecipientWorkspace(token) {
     const response = await request(`/api/shared-report/${encodeToken(token)}/workspace`);
     return {

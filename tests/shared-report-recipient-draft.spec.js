@@ -69,6 +69,7 @@ async function createSharedReportLink(request, ownerCookie, comparisonId, recipi
     data: {
       comparisonId,
       recipientEmail,
+      allowRecipientAiReview: true,
       canEdit: true,
       canEditConfidential: true,
       canReevaluate: true,

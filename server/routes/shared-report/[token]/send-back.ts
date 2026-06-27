@@ -570,6 +570,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         reportMetadata: {
           workflow: 'single_shared_report',
           comparison_id: comparisonId || null,
+          allow_recipient_ai_review: false,
           exchange_round: nextRound,
           parent_link_id: resolved.link.id,
           parent_token: token,

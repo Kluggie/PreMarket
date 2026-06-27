@@ -1,8 +1,15 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
+import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
+import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import {
+  getRecipientAiReviewEnabled,
+  mergeRecipientAiReviewIntoReportMetadata,
+  readRecipientAiReviewEnabledFromBody,
+} from '../../_lib/shared-link-review-permissions.js';
 import {
   buildSharedHistoryComposite,
   loadSharedReportHistory,
@@ -38,7 +45,7 @@ function toObject(value: unknown) {
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, '/api/sharedReports/[token]', async (context) => {
-    ensureMethod(req, ['GET']);
+    ensureMethod(req, ['GET', 'PATCH']);
 
     const token = getToken(req, tokenParam);
     if (!token) {
@@ -46,6 +53,54 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     }
 
     const db = getDb();
+
+    if (req.method === 'PATCH') {
+      const auth = await requireUser(req, res);
+      if (!auth.ok) {
+        return;
+      }
+      context.userId = auth.user.id;
+
+      const [existingLink] = await db
+        .select()
+        .from(schema.sharedLinks)
+        .where(eq(schema.sharedLinks.token, token))
+        .limit(1);
+
+      if (!existingLink || existingLink.mode !== 'shared_report') {
+        throw new ApiError(404, 'token_not_found', 'Shared report link not found');
+      }
+      if (existingLink.userId !== auth.user.id) {
+        throw new ApiError(403, 'forbidden', 'Only the link owner can update recipient AI review access');
+      }
+
+      const body = await readJsonBody(req);
+      const allowRecipientAiReview = readRecipientAiReviewEnabledFromBody(
+        body,
+        getRecipientAiReviewEnabled(existingLink),
+      );
+
+      const [updatedLink] = await db
+        .update(schema.sharedLinks)
+        .set({
+          reportMetadata: mergeRecipientAiReviewIntoReportMetadata(
+            existingLink.reportMetadata,
+            allowRecipientAiReview,
+          ),
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.sharedLinks.id, existingLink.id))
+        .returning();
+
+      ok(res, 200, {
+        sharedReport: {
+          token: (updatedLink || existingLink).token,
+          allow_recipient_ai_review: getRecipientAiReviewEnabled(updatedLink || existingLink),
+        },
+      });
+      return;
+    }
+
     const [joined] = await db
       .select({
         link: schema.sharedLinks,
@@ -134,6 +189,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ai_report: projection.public_report || {},
         uses: updatedLink.uses,
         max_uses: updatedLink.maxUses,
+        allow_recipient_ai_review: getRecipientAiReviewEnabled(updatedLink),
         created_at: updatedLink.createdAt,
         expires_at: updatedLink.expiresAt || null,
         recipient_email_locked: Boolean(updatedLink.recipientEmail),

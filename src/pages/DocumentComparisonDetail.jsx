@@ -21,6 +21,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
@@ -766,6 +767,28 @@ export default function DocumentComparisonDetail() {
     },
   });
 
+  const updateShareSettingsMutation = useMutation({
+    mutationFn: async ({ token, allowRecipientAiReview }) => {
+      if (!asText(token)) {
+        throw new Error('Shared report link is not available yet');
+      }
+      return sharedReportsClient.update(token, {
+        allowRecipientAiReview,
+      });
+    },
+    onSuccess: async (_payload, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
+      toast.success(
+        variables?.allowRecipientAiReview
+          ? 'Recipient AI reviews enabled'
+          : 'Recipient AI reviews disabled',
+      );
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to update recipient AI review access');
+    },
+  });
+
   useEffect(() => {
     if (!isShareDialogOpen) {
       setIsShareLinkInitializedForOpen(false);
@@ -1333,6 +1356,35 @@ export default function DocumentComparisonDetail() {
                   <Badge className="bg-blue-100 text-blue-700">
                     Last delivery: {activeSharedReport.last_delivery.status}
                   </Badge>
+                ) : null}
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-slate-900">Allow recipient AI reviews</p>
+                    <p className="text-xs text-slate-600">
+                      When enabled, the recipient can run full AI mediation reviews. These count against your plan&apos;s monthly review limit.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={Boolean(activeSharedReport?.allow_recipient_ai_review)}
+                    disabled={
+                      !activeSharedReport?.token ||
+                      isShareLinkPanelLoading ||
+                      updateShareSettingsMutation.isPending
+                    }
+                    onCheckedChange={(checked) =>
+                      updateShareSettingsMutation.mutate({
+                        token: activeSharedReport?.token || '',
+                        allowRecipientAiReview: checked,
+                      })
+                    }
+                    aria-label="Allow recipient AI reviews"
+                  />
+                </div>
+                {updateShareSettingsMutation.isPending ? (
+                  <p className="mt-2 text-xs text-slate-500">Saving recipient AI review access...</p>
                 ) : null}
               </div>
 

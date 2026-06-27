@@ -1,4 +1,4 @@
-import { and, desc, eq, or } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
@@ -839,6 +839,7 @@ async function loadPriorBilateralRoundContext(params: {
   db: any;
   proposalId: string | null;
   userId: string;
+  currentBilateralRoundNumber?: number | null;
 }) {
   if (!params.proposalId) {
     return null;
@@ -871,10 +872,69 @@ async function loadPriorBilateralRoundContext(params: {
     .filter((row) => row.id && row.report);
 
   return buildMediationRoundContext({
-    bilateralRoundNumber: priorRows.length + 1,
+    bilateralRoundNumber:
+      Number.isFinite(Number(params.currentBilateralRoundNumber)) &&
+      Number(params.currentBilateralRoundNumber) > 0
+        ? Number(params.currentBilateralRoundNumber)
+        : priorRows.length + 1,
     priorBilateralRoundId: priorRows[0]?.id || null,
     priorReport: priorRows[0]?.report || null,
   });
+}
+
+async function findLatestOwnerRoundDuplicateEvaluation(params: {
+  db: any;
+  proposalId: string;
+  userId: string;
+  bilateralRoundNumber: number;
+  inputSharedHash: string;
+  inputConfHash: string;
+}) {
+  const [row] = await params.db
+    .select({
+      id: schema.proposalEvaluations.id,
+      result: schema.proposalEvaluations.result,
+    })
+    .from(schema.proposalEvaluations)
+    .where(
+      and(
+        eq(schema.proposalEvaluations.proposalId, params.proposalId),
+        eq(schema.proposalEvaluations.userId, params.userId),
+        eq(schema.proposalEvaluations.status, 'completed'),
+        eq(schema.proposalEvaluations.source, 'document_comparison_mediation'),
+        eq(schema.proposalEvaluations.inputSharedHash, params.inputSharedHash),
+        eq(schema.proposalEvaluations.inputConfHash, params.inputConfHash),
+        sql`${schema.proposalEvaluations.result}->'input_trace'->>'bilateral_round_number' = ${String(params.bilateralRoundNumber)}`,
+      ),
+    )
+    .orderBy(desc(schema.proposalEvaluations.createdAt))
+    .limit(1);
+
+  return row || null;
+}
+
+async function countOwnerRoundMediationEvaluations(params: {
+  db: any;
+  proposalId: string;
+  userId: string;
+  bilateralRoundNumber: number;
+}) {
+  const [row] = await params.db
+    .select({
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.proposalEvaluations)
+    .where(
+      and(
+        eq(schema.proposalEvaluations.proposalId, params.proposalId),
+        eq(schema.proposalEvaluations.userId, params.userId),
+        eq(schema.proposalEvaluations.status, 'completed'),
+        eq(schema.proposalEvaluations.source, 'document_comparison_mediation'),
+        sql`${schema.proposalEvaluations.result}->'input_trace'->>'bilateral_round_number' = ${String(params.bilateralRoundNumber)}`,
+      ),
+    );
+
+  return Number(row?.count || 0) || 0;
 }
 
 function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
@@ -1266,6 +1326,17 @@ function withAttemptMetadata(params: {
   };
 }
 
+function buildProposalSummaryView(proposal: any) {
+  if (!proposal) {
+    return null;
+  }
+  return {
+    id: proposal.id,
+    status: proposal.status,
+    evaluated_at: proposal.evaluatedAt || null,
+  };
+}
+
 function toApiFailureError(params: {
   classified: ClassifiedEvaluationFailure;
   requestId: string;
@@ -1399,13 +1470,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     ensureComparisonFound(existingRow);
     const existing = existingRow as DocumentComparisonRow;
 
-    let reviewReservationId: string | null = await reserveAiMediationReviewCredit(db, {
-      userId: existing.userId,
-      userEmail: user.email || null,
-      source: 'document_comparison_evaluate',
-      scopeId: existing.id,
-      requestId,
-    });
+    let reviewReservationId: string | null = null;
 
     let linkedProposal = null;
     if (existing.proposalId) {
@@ -1513,11 +1578,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const analysisStage = hasRecipientContributions
       ? MEDIATION_REVIEW_STAGE
       : STAGE1_SHARED_INTAKE_STAGE;
+    const ownerMediationRoundNumber =
+      analysisStage === MEDIATION_REVIEW_STAGE
+        ? (Number(sharedHistory?.maxRoundNumber || 0) || 0) + 1
+        : null;
     const baseMediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
       ? await loadPriorBilateralRoundContext({
           db,
           proposalId: existing.proposalId,
           userId: user.id,
+          currentBilateralRoundNumber: ownerMediationRoundNumber,
         })
       : null;
     const mediationEvidenceCandidates =
@@ -1646,6 +1716,84 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         }),
       );
     }
+
+    if (
+      analysisStage === MEDIATION_REVIEW_STAGE &&
+      existing.proposalId &&
+      asText(evaluationInputTrace.shared_hash) &&
+      asText(evaluationInputTrace.confidential_hash) &&
+      Number.isFinite(Number(ownerMediationRoundNumber)) &&
+      Number(ownerMediationRoundNumber) > 0
+    ) {
+      const duplicateEvaluation = await findLatestOwnerRoundDuplicateEvaluation({
+        db,
+        proposalId: existing.proposalId,
+        userId: existing.userId,
+        bilateralRoundNumber: Number(ownerMediationRoundNumber),
+        inputSharedHash: asText(evaluationInputTrace.shared_hash),
+        inputConfHash: asText(evaluationInputTrace.confidential_hash),
+      });
+
+      if (duplicateEvaluation) {
+        const duplicateResult =
+          duplicateEvaluation.result &&
+          typeof duplicateEvaluation.result === 'object' &&
+          !Array.isArray(duplicateEvaluation.result)
+            ? duplicateEvaluation.result
+            : {};
+        const duplicateEvaluationReport =
+          duplicateResult.report &&
+          typeof duplicateResult.report === 'object' &&
+          !Array.isArray(duplicateResult.report)
+            ? duplicateResult.report
+            : {};
+
+        ok(res, 200, {
+          comparison: mapComparisonRow(existing),
+          evaluation: duplicateEvaluationReport,
+          evaluation_provider:
+            asText((duplicateResult as any).evaluation_provider || (duplicateResult as any).provider) || null,
+          evaluation_model:
+            asText((duplicateResult as any).evaluation_model || (duplicateResult as any).model) || null,
+          evaluation_provider_reason:
+            asText((duplicateResult as any).evaluation_provider_reason || (duplicateResult as any).fallbackReason) || null,
+          proposal: buildProposalSummaryView(linkedProposal),
+          evaluation_input_trace: duplicateResult.input_trace || evaluationInputTrace,
+          request_id: requestId,
+          attempt_count: 0,
+          cached: true,
+        });
+        return;
+      }
+
+      const existingRoundEvaluationCount = await countOwnerRoundMediationEvaluations({
+        db,
+        proposalId: existing.proposalId,
+        userId: existing.userId,
+        bilateralRoundNumber: Number(ownerMediationRoundNumber),
+      });
+
+      if (existingRoundEvaluationCount >= 2) {
+        throw new ApiError(
+          409,
+          'owner_rereview_limit_reached',
+          'A re-review has already been generated for this round. Continue with the current review or move to the next round before requesting another one.',
+          {
+            bilateral_round_number: Number(ownerMediationRoundNumber),
+            proposal_id: existing.proposalId,
+            comparison_id: existing.id,
+          },
+        );
+      }
+    }
+
+    reviewReservationId = await reserveAiMediationReviewCredit(db, {
+      userId: existing.userId,
+      userEmail: user.email || null,
+      source: 'document_comparison_evaluate',
+      scopeId: existing.id,
+      requestId,
+    });
 
     await withDbWriteGuard({
       requestId,

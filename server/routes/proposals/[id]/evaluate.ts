@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, ilike, or } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
@@ -59,6 +60,32 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function hashPrefix(value: unknown) {
+  return createHash('sha256')
+    .update(asText(value))
+    .digest('hex')
+    .slice(0, 32);
+}
+
+function buildComparisonEvaluationInputTrace(params: {
+  sharedText: string;
+  confidentialText: string;
+  bilateralRoundNumber?: number | null;
+}) {
+  const sharedText = asText(params.sharedText);
+  const confidentialText = asText(params.confidentialText);
+  const trace: Record<string, unknown> = {
+    shared_hash: hashPrefix(sharedText),
+    confidential_hash: hashPrefix(confidentialText),
+    shared_length: sharedText.length,
+    confidential_length: confidentialText.length,
+  };
+  if (Number.isFinite(Number(params.bilateralRoundNumber)) && Number(params.bilateralRoundNumber) > 0) {
+    trace.bilateral_round_number = Number(params.bilateralRoundNumber);
+  }
+  return trace;
 }
 
 function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
@@ -399,6 +426,7 @@ async function loadPriorBilateralRoundContext(params: {
   db: any;
   proposalId: string;
   userId: string;
+  currentBilateralRoundNumber?: number | null;
 }) {
   const rows = await params.db
     .select({
@@ -427,10 +455,76 @@ async function loadPriorBilateralRoundContext(params: {
     .filter((row) => row.id && row.report);
 
   return buildMediationRoundContext({
-    bilateralRoundNumber: priorRows.length + 1,
+    bilateralRoundNumber:
+      Number.isFinite(Number(params.currentBilateralRoundNumber)) &&
+      Number(params.currentBilateralRoundNumber) > 0
+        ? Number(params.currentBilateralRoundNumber)
+        : priorRows.length + 1,
     priorBilateralRoundId: priorRows[0]?.id || null,
     priorReport: priorRows[0]?.report || null,
   });
+}
+
+async function findLatestOwnerRoundDuplicateEvaluation(params: {
+  db: any;
+  proposalId: string;
+  userId: string;
+  bilateralRoundNumber: number;
+  inputSharedHash: string;
+  inputConfHash: string;
+}) {
+  const [row] = await params.db
+    .select({
+      id: schema.proposalEvaluations.id,
+      proposalId: schema.proposalEvaluations.proposalId,
+      source: schema.proposalEvaluations.source,
+      status: schema.proposalEvaluations.status,
+      score: schema.proposalEvaluations.score,
+      summary: schema.proposalEvaluations.summary,
+      result: schema.proposalEvaluations.result,
+      createdAt: schema.proposalEvaluations.createdAt,
+      updatedAt: schema.proposalEvaluations.updatedAt,
+    })
+    .from(schema.proposalEvaluations)
+    .where(
+      and(
+        eq(schema.proposalEvaluations.proposalId, params.proposalId),
+        eq(schema.proposalEvaluations.userId, params.userId),
+        eq(schema.proposalEvaluations.status, 'completed'),
+        eq(schema.proposalEvaluations.source, 'document_comparison_mediation'),
+        eq(schema.proposalEvaluations.inputSharedHash, params.inputSharedHash),
+        eq(schema.proposalEvaluations.inputConfHash, params.inputConfHash),
+        sql`${schema.proposalEvaluations.result}->'input_trace'->>'bilateral_round_number' = ${String(params.bilateralRoundNumber)}`,
+      ),
+    )
+    .orderBy(desc(schema.proposalEvaluations.createdAt))
+    .limit(1);
+
+  return row || null;
+}
+
+async function countOwnerRoundMediationEvaluations(params: {
+  db: any;
+  proposalId: string;
+  userId: string;
+  bilateralRoundNumber: number;
+}) {
+  const [row] = await params.db
+    .select({
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.proposalEvaluations)
+    .where(
+      and(
+        eq(schema.proposalEvaluations.proposalId, params.proposalId),
+        eq(schema.proposalEvaluations.userId, params.userId),
+        eq(schema.proposalEvaluations.status, 'completed'),
+        eq(schema.proposalEvaluations.source, 'document_comparison_mediation'),
+        sql`${schema.proposalEvaluations.result}->'input_trace'->>'bilateral_round_number' = ${String(params.bilateralRoundNumber)}`,
+      ),
+    );
+
+  return Number(row?.count || 0) || 0;
 }
 
 function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
@@ -795,11 +889,16 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         const analysisStage = hasRecipientContributions
           ? MEDIATION_REVIEW_STAGE
           : STAGE1_SHARED_INTAKE_STAGE;
+        const ownerMediationRoundNumber =
+          analysisStage === MEDIATION_REVIEW_STAGE
+            ? (Number(sharedHistory?.maxRoundNumber || 0) || 0) + 1
+            : null;
         const baseMediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
           ? await loadPriorBilateralRoundContext({
               db,
               proposalId: proposal.id,
               userId: proposal.userId,
+              currentBilateralRoundNumber: ownerMediationRoundNumber,
             })
           : null;
         evaluationSource = getComparisonEvaluationSource(analysisStage);
@@ -809,6 +908,11 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         const comparisonConfidentialText = attributedConfidentialEntries.length > 0
           ? formatContributionsForAi(attributedConfidentialEntries)
           : String(comparison.docAText || '');
+        const evaluationInputTrace = buildComparisonEvaluationInputTrace({
+          sharedText: comparisonSharedText,
+          confidentialText: comparisonConfidentialText,
+          bilateralRoundNumber: ownerMediationRoundNumber,
+        });
         const mediationRoundContext = enrichMediationRoundContext({
           mediationRoundContext: baseMediationRoundContext || undefined,
           currentSharedText: comparisonSharedText,
@@ -833,6 +937,79 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               hasRecipientContributions,
             }),
           );
+        }
+        if (
+          analysisStage === MEDIATION_REVIEW_STAGE &&
+          Number.isFinite(Number(ownerMediationRoundNumber)) &&
+          Number(ownerMediationRoundNumber) > 0
+        ) {
+          const duplicateEvaluation = await findLatestOwnerRoundDuplicateEvaluation({
+            db,
+            proposalId: proposal.id,
+            userId: proposal.userId,
+            bilateralRoundNumber: Number(ownerMediationRoundNumber),
+            inputSharedHash: asText(evaluationInputTrace.shared_hash),
+            inputConfHash: asText(evaluationInputTrace.confidential_hash),
+          });
+
+          if (duplicateEvaluation) {
+            await releaseAiMediationReviewReservation(db, reviewReservationId);
+            reviewReservationId = null;
+
+            ok(res, 200, {
+              evaluation: {
+                id: duplicateEvaluation.id,
+                proposal_id: duplicateEvaluation.proposalId,
+                source: duplicateEvaluation.source,
+                status: duplicateEvaluation.status,
+                score: duplicateEvaluation.score,
+                summary: duplicateEvaluation.summary,
+                evaluation_provider:
+                  asLower((duplicateEvaluation?.result as any)?.evaluation_provider || (duplicateEvaluation?.result as any)?.provider) === 'vertex'
+                    ? 'vertex'
+                    : 'fallback',
+                evaluation_model:
+                  asText((duplicateEvaluation?.result as any)?.evaluation_model || (duplicateEvaluation?.result as any)?.model) || null,
+                evaluation_provider_reason:
+                  asText((duplicateEvaluation?.result as any)?.evaluation_provider_reason || (duplicateEvaluation?.result as any)?.fallbackReason) || null,
+                evaluator_family: asText((duplicateEvaluation?.result as any)?.evaluator_family) || null,
+                evaluator_version: asText((duplicateEvaluation?.result as any)?.evaluator_version) || null,
+                evaluation_architecture: asText((duplicateEvaluation?.result as any)?.evaluation_architecture) || null,
+                result: duplicateEvaluation.result || {},
+                created_date: duplicateEvaluation.createdAt,
+                updated_date: duplicateEvaluation.updatedAt,
+              },
+              proposal: {
+                id: proposal.id,
+                status: proposal.status,
+                evaluated_at: proposal.evaluatedAt || null,
+              },
+              cached: true,
+            });
+            return;
+          }
+
+          const existingRoundEvaluationCount = await countOwnerRoundMediationEvaluations({
+            db,
+            proposalId: proposal.id,
+            userId: proposal.userId,
+            bilateralRoundNumber: Number(ownerMediationRoundNumber),
+          });
+
+          if (existingRoundEvaluationCount >= 2) {
+            await releaseAiMediationReviewReservation(db, reviewReservationId);
+            reviewReservationId = null;
+            throw new ApiError(
+              409,
+              'owner_rereview_limit_reached',
+              'A re-review has already been generated for this round. Continue with the current review or move to the next round before requesting another one.',
+              {
+                bilateral_round_number: Number(ownerMediationRoundNumber),
+                proposal_id: proposal.id,
+                comparison_id: comparison.id,
+              },
+            );
+          }
         }
         let comparisonEvaluation: any;
         if (docComparisonEngine === 'v2') {
@@ -937,12 +1114,23 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           );
         }
 
+        if (comparisonEvaluation && typeof comparisonEvaluation === 'object' && !Array.isArray(comparisonEvaluation)) {
+          comparisonEvaluation = {
+            ...comparisonEvaluation,
+            input_trace: evaluationInputTrace,
+          };
+        }
+
         result = buildProposalResultFromEvaluation(proposal, comparisonEvaluation, {
           document_comparison_id: comparison.id,
           hidden_spans: 0,
           doc_a_length: comparisonConfidentialText.length,
           doc_b_length: comparisonSharedText.length,
         });
+        result = {
+          ...result,
+          input_trace: evaluationInputTrace,
+        };
 
         await db
           .update(schema.documentComparisons)
@@ -1120,6 +1308,11 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       status: 'completed',
       score: result.score,
       summary: result.summary,
+      inputSharedHash: asText((result as any)?.input_trace?.shared_hash) || null,
+      inputConfHash: asText((result as any)?.input_trace?.confidential_hash) || null,
+      inputSharedLen: Number((result as any)?.input_trace?.shared_length || 0) || null,
+      inputConfLen: Number((result as any)?.input_trace?.confidential_length || 0) || null,
+      inputVersion: null,
       result,
       createdAt: now,
       updatedAt: now,

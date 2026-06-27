@@ -29,6 +29,7 @@ import {
   shouldMaskPrivateSender,
 } from '../../_lib/private-mode.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import { getRecipientAiReviewEnabled } from '../../_lib/shared-link-review-permissions.js';
 import {
   buildLegacyOpportunityNotificationHref,
   buildNotificationTargetMetadata,
@@ -342,6 +343,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           can_edit: Boolean(row.canEdit),
           can_edit_confidential: Boolean(row.canEditConfidential),
           can_reevaluate: Boolean(row.canReevaluate),
+          allow_recipient_ai_review: getRecipientAiReviewEnabled(row),
           can_send_back: Boolean(row.canSendBack),
           expires_at: row.expiresAt,
           created_date: row.createdAt,

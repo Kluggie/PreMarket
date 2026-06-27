@@ -443,8 +443,8 @@ function toFriendlyEvaluateError(error) {
   ) {
     return 'AI mediation took too long to complete. Please retry in a moment.';
   }
-  if (code === 'reevaluation_not_allowed') {
-    return 'This link does not allow additional AI re-reviews. You can still edit and send your response.';
+  if (code === 'recipient_ai_review_not_enabled') {
+    return 'The proposal owner has not enabled recipient AI reviews for this link.';
   }
   if (code === 'recipient_rereview_limit_reached') {
     return 'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
@@ -624,6 +624,7 @@ export default function SharedReport() {
   });
 
   const share = workspaceQuery.data?.share || null;
+  const canRunRecipientAiReview = Boolean(share?.permissions?.can_run_ai_review);
   const parent = workspaceQuery.data?.parent || null;
   const hasCanonicalParentStatus = Boolean(asText(parent?.primary_status_key));
   const parentThreadState = useMemo(
@@ -1983,6 +1984,10 @@ export default function SharedReport() {
     if (requiresRecipientVerification) {
       toast.error('Verify access before running AI mediation.');
       setStep(0);
+      return;
+    }
+    if (!canRunRecipientAiReview) {
+      toast.error('The proposal owner has not enabled recipient AI reviews for this link.');
       return;
     }
     const confirmed = window.confirm(
@@ -3417,6 +3422,12 @@ export default function SharedReport() {
               }
               onBack={() => setStep(2)}
               onRunEvaluation={runEvaluationFromReview}
+              runActionDisabled={!canRunRecipientAiReview}
+              runActionDisabledMessage={
+                canRunRecipientAiReview
+                  ? ''
+                  : 'The proposal owner has not enabled recipient AI reviews for this link.'
+              }
               runActionLabel={getRunOpportunityReviewLabel({
                 stage: MEDIATION_REVIEW_STAGE,
                 isPending: step3IsEvaluationRunning,
