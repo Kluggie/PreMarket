@@ -5,7 +5,7 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
-import { appendProposalHistory } from '../../_lib/proposal-history.js';
+import { buildProposalInsertWithCreatedHistoryQueries } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
   htmlToEditorText,
@@ -199,28 +199,38 @@ export default async function handler(req: any, res: any) {
     } else if (createLinkedProposal) {
       await assertStarterOpportunityCreateAllowed(db, auth.user.id);
 
-      const [proposal] = await db
-        .insert(schema.proposals)
-        .values({
-          id: newId('proposal'),
-          userId: auth.user.id,
-          title,
-          status: 'draft',
-          templateId: null,
-          templateName: 'Document Comparison',
-          proposalType: 'document_comparison',
-          draftStep: 1,
-          sourceProposalId: null,
-          documentComparisonId: null,
-          partyAEmail: normalizeEmail(auth.user.email) || null,
-          partyBEmail: recipientEmail,
-          partyBName: recipientName,
-          summary: 'Document comparison workflow',
-          payload: {},
+      const proposalValues = {
+        id: newId('proposal'),
+        userId: auth.user.id,
+        title,
+        status: 'draft',
+        templateId: null,
+        templateName: 'Document Comparison',
+        proposalType: 'document_comparison',
+        draftStep: 1,
+        sourceProposalId: null,
+        documentComparisonId: null,
+        partyAEmail: normalizeEmail(auth.user.email) || null,
+        partyBEmail: recipientEmail,
+        partyBName: recipientName,
+        summary: 'Document comparison workflow',
+        payload: {},
+        createdAt: now,
+        updatedAt: now,
+      };
+      const [proposalRows] = await db.batch(
+        buildProposalInsertWithCreatedHistoryQueries(db, {
+          proposal: proposalValues,
+          actorUserId: auth.user.id,
+          actorRole: 'party_a',
           createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
+          requestId: context.requestId,
+          eventData: {
+            source: 'document_comparison',
+          },
+        }).queries,
+      );
+      const proposal = proposalRows[0];
       linkedProposalId = proposal.id;
     }
 
@@ -288,27 +298,6 @@ export default async function handler(req: any, res: any) {
         })
         .where(eq(schema.proposals.id, linkedProposalId));
 
-      const [proposal] = await db
-        .select()
-        .from(schema.proposals)
-        .where(eq(schema.proposals.id, linkedProposalId))
-        .limit(1);
-
-      if (proposal) {
-        await appendProposalHistory(db, {
-          proposal,
-          actorUserId: auth.user.id,
-          actorRole: 'party_a',
-          milestone: 'create',
-          eventType: 'proposal.created',
-          documentComparison: created,
-          createdAt: now,
-          requestId: context.requestId,
-          eventData: {
-            source: 'document_comparison',
-          },
-        });
-      }
     }
 
     ok(res, 201, {

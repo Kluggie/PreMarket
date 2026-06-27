@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lt, or, sql } from 'drizzle-orm';
 import { ApiError } from './errors.js';
 import { newId } from './ids.js';
 import { getProposalFinalOutcomeStatus } from './proposal-outcomes.js';
@@ -46,6 +46,8 @@ const AI_REVIEW_RESERVATION_EVENT = 'ai_mediation_review_reservation';
 const AI_REVIEW_RESERVATION_TTL_MS = 10 * 60 * 1000;
 const SHARED_LINK_AI_ASSISTANCE_DAILY_LIMIT = 5;
 const COMPANY_CONTEXT_SCOPE_DAILY_LIMIT = 1;
+const PROPOSAL_CREATED_EVENT = 'proposal.created';
+const TERMINAL_PROPOSAL_STATUSES = new Set(['won', 'lost']);
 const AI_REVIEW_PROPOSAL_SOURCES: string[] = [
   'proposal_stage1_intake',
   'document_comparison_stage1_intake',
@@ -82,6 +84,85 @@ function getMonthWindow(now = new Date()) {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0));
   return { start, end };
+}
+
+function normalizeIdentifier(value: unknown) {
+  return String(value || '').trim();
+}
+
+function proposalCountsTowardStarterActiveLimit(proposal: any) {
+  const finalOutcome = getProposalFinalOutcomeStatus(proposal);
+  if (finalOutcome === 'won' || finalOutcome === 'lost') {
+    return false;
+  }
+
+  const normalizedStatus = String(proposal?.status || '').trim().toLowerCase();
+  return !TERMINAL_PROPOSAL_STATUSES.has(normalizedStatus);
+}
+
+async function countStarterCreatedOpportunitiesThisMonth(
+  db: any,
+  params: {
+    userId: string;
+    start: Date;
+    end: Date;
+  },
+) {
+  const [proposalRows, createdEventRows] = await Promise.all([
+    db
+      .select({ id: schema.proposals.id })
+      .from(schema.proposals)
+      .where(
+        and(
+          eq(schema.proposals.userId, params.userId),
+          gte(schema.proposals.createdAt, params.start),
+          lt(schema.proposals.createdAt, params.end),
+        ),
+      ),
+    db
+      .select({ proposalId: schema.proposalEvents.proposalId })
+      .from(schema.proposalEvents)
+      .where(
+        and(
+          eq(schema.proposalEvents.proposalUserId, params.userId),
+          eq(schema.proposalEvents.eventType, PROPOSAL_CREATED_EVENT),
+          gte(schema.proposalEvents.createdAt, params.start),
+          lt(schema.proposalEvents.createdAt, params.end),
+        ),
+      ),
+  ]);
+
+  const distinctOpportunityIds = new Set<string>();
+
+  proposalRows.forEach((row: any) => {
+    const proposalId = normalizeIdentifier(row?.id);
+    if (proposalId) {
+      distinctOpportunityIds.add(proposalId);
+    }
+  });
+
+  createdEventRows.forEach((row: any) => {
+    const proposalId = normalizeIdentifier(row?.proposalId);
+    if (proposalId) {
+      distinctOpportunityIds.add(proposalId);
+    }
+  });
+
+  return distinctOpportunityIds.size;
+}
+
+async function countStarterActiveOpportunities(db: any, userId: string) {
+  const activeCandidates = await db
+    .select({
+      id: schema.proposals.id,
+      status: schema.proposals.status,
+      partyAOutcome: schema.proposals.partyAOutcome,
+      partyBOutcome: schema.proposals.partyBOutcome,
+    })
+    .from(schema.proposals)
+    .where(eq(schema.proposals.userId, userId));
+
+  return activeCandidates.filter((row: any) => proposalCountsTowardStarterActiveLimit(row)).length;
 }
 
 export async function getUserPlanTier(db: any, userId: string, now = new Date()) {
@@ -292,22 +373,17 @@ export async function assertStarterOpportunityCreateAllowed(db: any, userId: str
   }
 
   const { start, end } = getMonthWindow(now);
-  const [monthlyCreatedRow] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(schema.proposals)
-    .where(
-      and(
-        eq(schema.proposals.userId, userId),
-        gte(schema.proposals.createdAt, start),
-        lt(schema.proposals.createdAt, end),
-      ),
-    );
-  const monthlyCreated = toCount(monthlyCreatedRow?.count);
+  const monthlyCreated = await countStarterCreatedOpportunitiesThisMonth(db, {
+    userId,
+    start,
+    end,
+  });
 
   if (monthlyCreated >= STARTER_LIMITS.opportunitiesPerMonth) {
     throw buildLimitError({
       code: 'starter_opportunities_monthly_limit_reached',
-      message: 'Starter plan allows 1 new opportunity per month.',
+      message:
+        "You've reached the Starter limit of 1 opportunity this month. Archiving does not reset monthly usage.",
       extra: {
         limit: STARTER_LIMITS.opportunitiesPerMonth,
         used: monthlyCreated,
@@ -315,36 +391,13 @@ export async function assertStarterOpportunityCreateAllowed(db: any, userId: str
     });
   }
 
-  const activeCandidates = await db
-    .select({
-      id: schema.proposals.id,
-      status: schema.proposals.status,
-      partyAOutcome: schema.proposals.partyAOutcome,
-      partyBOutcome: schema.proposals.partyBOutcome,
-    })
-    .from(schema.proposals)
-    .where(
-      and(
-        eq(schema.proposals.userId, userId),
-        isNull(schema.proposals.deletedByPartyAAt),
-        isNull(schema.proposals.archivedByPartyAAt),
-        isNull(schema.proposals.archivedAt),
-      ),
-    );
-
-  const activeCount = activeCandidates.filter((row: any) => {
-    const finalOutcome = getProposalFinalOutcomeStatus(row);
-    if (finalOutcome === 'won' || finalOutcome === 'lost') {
-      return false;
-    }
-    const normalizedStatus = String(row?.status || '').trim().toLowerCase();
-    return normalizedStatus !== 'won' && normalizedStatus !== 'lost';
-  }).length;
+  const activeCount = await countStarterActiveOpportunities(db, userId);
 
   if (activeCount >= STARTER_LIMITS.activeOpportunities) {
     throw buildLimitError({
       code: 'starter_active_opportunities_limit_reached',
-      message: 'Starter plan allows 1 active opportunity at a time.',
+      message:
+        "You've reached the Starter limit of 1 active opportunity. Closing an opportunity frees the active slot; archiving only hides it from your main view.",
       extra: {
         limit: STARTER_LIMITS.activeOpportunities,
         used: activeCount,
@@ -792,44 +845,14 @@ export async function getStarterUsageSnapshot(
   }
 
   const { start, end } = getMonthWindow(params.now || new Date());
-
-  const [monthlyCreatedRow] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(schema.proposals)
-    .where(
-      and(
-        eq(schema.proposals.userId, params.userId),
-        gte(schema.proposals.createdAt, start),
-        lt(schema.proposals.createdAt, end),
-      ),
-    );
-  const opportunitiesCreatedThisMonth = toCount(monthlyCreatedRow?.count);
-
-  const activeCandidates = await db
-    .select({
-      id: schema.proposals.id,
-      status: schema.proposals.status,
-      partyAOutcome: schema.proposals.partyAOutcome,
-      partyBOutcome: schema.proposals.partyBOutcome,
-    })
-    .from(schema.proposals)
-    .where(
-      and(
-        eq(schema.proposals.userId, params.userId),
-        isNull(schema.proposals.deletedByPartyAAt),
-        isNull(schema.proposals.archivedByPartyAAt),
-        isNull(schema.proposals.archivedAt),
-      ),
-    );
-
-  const activeOpportunities = activeCandidates.filter((row: any) => {
-    const finalOutcome = getProposalFinalOutcomeStatus(row);
-    if (finalOutcome === 'won' || finalOutcome === 'lost') {
-      return false;
-    }
-    const normalizedStatus = String(row?.status || '').trim().toLowerCase();
-    return normalizedStatus !== 'won' && normalizedStatus !== 'lost';
-  }).length;
+  const [opportunitiesCreatedThisMonth, activeOpportunities] = await Promise.all([
+    countStarterCreatedOpportunitiesThisMonth(db, {
+      userId: params.userId,
+      start,
+      end,
+    }),
+    countStarterActiveOpportunities(db, params.userId),
+  ]);
 
   const aiEvaluationsThisMonth = await countOwnerAiMediationReviewsThisMonth(db, {
     userId: params.userId,

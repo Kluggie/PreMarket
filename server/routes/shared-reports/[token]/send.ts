@@ -7,7 +7,11 @@ import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
-import { appendProposalHistory } from '../../../_lib/proposal-history.js';
+import {
+  appendProposalHistory,
+  buildProposalInsertWithCreatedHistoryQueries,
+} from '../../../_lib/proposal-history.js';
+import { assertStarterOpportunityCreateAllowed } from '../../../_lib/starter-entitlements.js';
 import {
   buildProposalThreadActivityValues,
   PROPOSAL_THREAD_ACTIVITY_SENT,
@@ -533,34 +537,47 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     let targetComparisonId = comparisonId;
 
     if (needsFork) {
+      const forkCreatedAt = new Date();
+      await assertStarterOpportunityCreateAllowed(db, auth.user.id, forkCreatedAt);
+
       const forkedProposalId = newId('proposal');
       let forkedComparisonId: string | null = null;
-
-      // Create forked proposal first (before comparison, to satisfy FK)
-      const [forkedRow] = await db
-        .insert(schema.proposals)
-        .values({
-          id: forkedProposalId,
-          userId: proposal.userId,
-          title: proposal.title,
-          status: 'draft',
-          statusReason: proposal.statusReason,
-          templateId: proposal.templateId,
-          templateName: proposal.templateName,
-          proposalType: proposal.proposalType,
-          draftStep: proposal.draftStep,
-          sourceProposalId: proposal.id,
-          documentComparisonId: null,
-          partyAEmail: proposal.partyAEmail,
-          partyBEmail: recipientEmail,
-          partyBName: null,
-          summary: proposal.summary,
-          isPrivateMode: proposal.isPrivateMode,
-          payload: proposal.payload,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
+      const forkedProposalValues = {
+        id: forkedProposalId,
+        userId: proposal.userId,
+        title: proposal.title,
+        status: 'draft',
+        statusReason: proposal.statusReason,
+        templateId: proposal.templateId,
+        templateName: proposal.templateName,
+        proposalType: proposal.proposalType,
+        draftStep: proposal.draftStep,
+        sourceProposalId: proposal.id,
+        documentComparisonId: null,
+        partyAEmail: proposal.partyAEmail,
+        partyBEmail: recipientEmail,
+        partyBName: null,
+        summary: proposal.summary,
+        isPrivateMode: proposal.isPrivateMode,
+        payload: proposal.payload,
+        createdAt: forkCreatedAt,
+        updatedAt: forkCreatedAt,
+      };
+      const [forkedRows] = await db.batch(
+        buildProposalInsertWithCreatedHistoryQueries(db, {
+          proposal: forkedProposalValues,
+          actorUserId: auth.user.id,
+          actorRole: 'party_a',
+          createdAt: forkCreatedAt,
+          requestId: context.requestId,
+          eventData: {
+            source: 'shared_report_send_fork',
+            forked_from_proposal_id: proposal.id,
+            recipient_email: recipientEmail,
+          },
+        }).queries,
+      );
+      const forkedRow = forkedRows[0];
 
       // Clone document comparison if one exists
       if (comparisonId) {
@@ -593,8 +610,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             publicReport: sourceComparison.publicReport,
             inputs: sourceComparison.inputs,
             metadata: sourceComparison.metadata,
-            createdAt: new Date(),
-            updatedAt: new Date(),
+            createdAt: forkCreatedAt,
+            updatedAt: forkCreatedAt,
           });
           forkedComparisonId = newCompId;
           targetComparisonId = newCompId;
@@ -602,7 +619,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           // Link the forked proposal to its comparison
           await db
             .update(schema.proposals)
-            .set({ documentComparisonId: forkedComparisonId, updatedAt: new Date() })
+            .set({ documentComparisonId: forkedComparisonId, updatedAt: forkCreatedAt })
             .where(eq(schema.proposals.id, forkedProposalId));
           forkedRow.documentComparisonId = forkedComparisonId;
         }
@@ -635,8 +652,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             ...reportMetadata,
             comparison_id: forkedComparisonId || null,
           },
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          createdAt: forkCreatedAt,
+          updatedAt: forkCreatedAt,
         })
         .returning();
 

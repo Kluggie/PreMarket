@@ -423,6 +423,29 @@ if (!hasDatabaseUrl()) {
     assert.equal(summary.starterUsage?.remaining?.opportunitiesPerMonth, 0);
   });
 
+  test('dashboard starter usage keeps archived open opportunities in the active count', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const starterUserId = 'dashboard_starter_archived_user';
+    const starterEmail = 'dashboard-starter-archived-user@example.com';
+    await seedStarterPlan(starterUserId, starterEmail);
+
+    const starterCookie = authCookie(starterUserId, starterEmail);
+    const proposal = await createProposal(starterCookie, {
+      title: 'Starter Archived Draft',
+      status: 'draft',
+      partyBEmail: 'starter-archived-recipient@example.com',
+    });
+
+    await archiveProposal(starterCookie, proposal.id);
+
+    const summary = await getSummary(starterCookie);
+    assert.equal(summary.archivedCount, 1);
+    assert.equal(summary.starterUsage?.usage?.activeOpportunities, 1);
+    assert.equal(summary.starterUsage?.remaining?.activeOpportunities, 0);
+  });
+
   test('dashboard summary omits starter usage snapshot for paid users', async () => {
     await ensureMigrated();
     await resetTables();

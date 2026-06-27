@@ -5,9 +5,14 @@ import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import { eq } from 'drizzle-orm';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
+import proposalArchiveHandler from '../../server/routes/proposals/[id]/archive.ts';
+import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
 import proposalEvaluateHandler from '../../server/routes/proposals/[id]/evaluate.ts';
+import proposalSendHandler from '../../server/routes/proposals/[id]/send.ts';
 import templateUseHandler from '../../server/routes/templates/[id]/use.ts';
 import documentComparisonsHandler from '../../server/routes/document-comparisons/index.ts';
+import sharedReportsHandler from '../../server/routes/shared-reports/index.ts';
+import sharedReportSendHandler from '../../server/routes/shared-reports/[token]/send.ts';
 import documentsHandler from '../../server/routes/documents/index.ts';
 import documentsExtractHandler from '../../server/routes/documents/extract.ts';
 import {
@@ -17,6 +22,7 @@ import {
   releaseAiMediationReviewReservation,
   reserveAiMediationReviewCredit,
   getAiMediationReviewLimitForPlan,
+  getStarterUsageSnapshot,
 } from '../../server/_lib/starter-entitlements.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
@@ -88,13 +94,18 @@ async function seedProposal(userId, title, partial = {}) {
     partyBEmail: partial.partyBEmail || null,
     summary: null,
     payload: {},
+    sentAt: partial.sentAt || null,
+    receivedAt: partial.receivedAt || null,
     createdAt: partial.createdAt || new Date(),
     updatedAt: partial.updatedAt || new Date(),
+    closedAt: partial.closedAt || null,
     archivedAt: partial.archivedAt || null,
     archivedByPartyAAt: partial.archivedByPartyAAt || null,
     deletedByPartyAAt: partial.deletedByPartyAAt || null,
     partyAOutcome: partial.partyAOutcome || null,
+    partyAOutcomeAt: partial.partyAOutcomeAt || null,
     partyBOutcome: partial.partyBOutcome || null,
+    partyBOutcomeAt: partial.partyBOutcomeAt || null,
   });
 }
 
@@ -111,6 +122,154 @@ async function createProposalViaApi(cookie, title = 'New Proposal') {
   const res = createMockRes();
   await proposalsHandler(req, res);
   return { status: res.statusCode, body: res.jsonBody() };
+}
+
+async function createComparisonViaApi(cookie, overrides = {}) {
+  const req = createMockReq({
+    method: 'POST',
+    url: '/api/document-comparisons',
+    headers: { cookie },
+    body: {
+      title: overrides.title || 'Starter Comparison',
+      createProposal: true,
+      docAText: overrides.docAText || 'Private owner context for Starter quota tests.',
+      docBText: overrides.docBText || 'Shared opportunity context for Starter quota tests.',
+      recipientEmail: overrides.recipientEmail || overrides.recipient_email || null,
+      recipientName: overrides.recipientName || overrides.recipient_name || null,
+    },
+  });
+  const res = createMockRes();
+  await documentComparisonsHandler(req, res);
+  return { status: res.statusCode, body: res.jsonBody() };
+}
+
+async function createSharedReportLinkViaApi(cookie, comparisonId, recipientEmail, overrides = {}) {
+  const req = createMockReq({
+    method: 'POST',
+    url: '/api/sharedReports',
+    headers: { cookie },
+    body: {
+      comparisonId,
+      recipientEmail,
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 50,
+      ...overrides,
+    },
+  });
+  const res = createMockRes();
+  await sharedReportsHandler(req, res);
+  return { status: res.statusCode, body: res.jsonBody() };
+}
+
+async function useTemplateViaApi(cookie, templateId, overrides = {}) {
+  const req = createMockReq({
+    method: 'POST',
+    url: `/api/templates/${templateId}/use`,
+    headers: { cookie },
+    query: { id: templateId },
+    body: {
+      title: overrides.title || 'from template',
+      ...overrides,
+    },
+  });
+  const res = createMockRes();
+  await templateUseHandler(req, res, templateId);
+  return { status: res.statusCode, body: res.jsonBody() };
+}
+
+async function sendProposalViaApi(cookie, proposalId, recipientEmail, overrides = {}) {
+  const req = createMockReq({
+    method: 'POST',
+    url: `/api/proposals/${proposalId}/send`,
+    headers: { cookie },
+    query: { id: proposalId },
+    body: {
+      recipientEmail,
+      createShareLink: true,
+      ...overrides,
+    },
+  });
+  const res = createMockRes();
+  await proposalSendHandler(req, res, proposalId);
+  return { status: res.statusCode, body: res.jsonBody() };
+}
+
+async function sendSharedReportViaApi(cookie, token, recipientEmail) {
+  const req = createMockReq({
+    method: 'POST',
+    url: `/api/sharedReports/${token}/send`,
+    headers: { cookie },
+    query: { token },
+    body: {
+      recipientEmail,
+    },
+  });
+  const res = createMockRes();
+  await sharedReportSendHandler(req, res, token);
+  return { status: res.statusCode, body: res.jsonBody() };
+}
+
+async function archiveProposalViaApi(cookie, proposalId) {
+  const req = createMockReq({
+    method: 'PATCH',
+    url: `/api/proposals/${proposalId}/archive`,
+    headers: { cookie },
+    query: { id: proposalId },
+  });
+  const res = createMockRes();
+  await proposalArchiveHandler(req, res, proposalId);
+  return { status: res.statusCode, body: res.jsonBody() };
+}
+
+async function deleteProposalViaApi(cookie, proposalId) {
+  const req = createMockReq({
+    method: 'DELETE',
+    url: `/api/proposals/${proposalId}`,
+    headers: { cookie },
+    query: { id: proposalId },
+  });
+  const res = createMockRes();
+  await proposalDetailHandler(req, res, proposalId);
+  return { status: res.statusCode, body: res.jsonBody() };
+}
+
+function stubResendEmail() {
+  const original = {
+    EMAIL_MODE: process.env.EMAIL_MODE,
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL,
+    fetch: globalThis.fetch,
+  };
+  const sent = [];
+  process.env.EMAIL_MODE = 'transactional';
+  process.env.RESEND_API_KEY = 'test-key-starter-limits';
+  process.env.RESEND_FROM_EMAIL = 'test@mail.getpremarket.com';
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes('api.resend.com/emails')) {
+      const payload = JSON.parse(String(init.body || '{}'));
+      sent.push(payload);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: `msg_${sent.length}` }),
+      };
+    }
+    return original.fetch(url, init);
+  };
+  return {
+    sent,
+    restore() {
+      globalThis.fetch = original.fetch;
+      for (const [key, value] of Object.entries(original)) {
+        if (key === 'fetch') continue;
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    },
+  };
 }
 
 function startOfPreviousUtcMonth() {
@@ -147,6 +306,197 @@ if (!hasDatabaseUrl()) {
     const result = await createProposalViaApi(cookie, 'blocked p2');
     assert.equal(result.status, 429);
     assert.equal(result.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
+  });
+
+  test('Starter monthly quota cannot be bypassed by archiving the first opportunity', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_archive_monthly_block';
+    const email = 'starter.archive.monthly@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const created = await createProposalViaApi(cookie, 'first opportunity');
+    assert.equal(created.status, 201);
+
+    const proposalId = created.body?.proposal?.id;
+    assert.ok(proposalId);
+
+    const archived = await archiveProposalViaApi(cookie, proposalId);
+    assert.equal(archived.status, 200);
+    assert.ok(archived.body?.proposal?.archived_at);
+
+    const blocked = await createProposalViaApi(cookie, 'second opportunity');
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
+    assert.equal(blocked.body?.error?.used, 1);
+  });
+
+  test('Starter monthly quota cannot be bypassed by deleting a draft after creation', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_delete_monthly_block';
+    const email = 'starter.delete.monthly@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const created = await createProposalViaApi(cookie, 'deletable draft');
+    assert.equal(created.status, 201);
+
+    const proposalId = created.body?.proposal?.id;
+    assert.ok(proposalId);
+
+    const deleted = await deleteProposalViaApi(cookie, proposalId);
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body?.deleted, true);
+
+    const blocked = await createProposalViaApi(cookie, 'blocked after delete');
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
+    assert.equal(blocked.body?.error?.used, 1);
+  });
+
+  test('Starter cannot bypass monthly quota via owner send-fork', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_send_fork_monthly_block';
+    const email = 'starter.send.fork.monthly@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const stub = stubResendEmail();
+    try {
+      const created = await createProposalViaApi(cookie, 'starter send-fork monthly');
+      assert.equal(created.status, 201);
+      const proposalId = created.body?.proposal?.id;
+      assert.ok(proposalId);
+
+      const firstSend = await sendProposalViaApi(cookie, proposalId, 'alice@example.com');
+      assert.equal(firstSend.status, 200);
+
+      const blocked = await sendProposalViaApi(cookie, proposalId, 'bob@example.com');
+      assert.equal(blocked.status, 429);
+      assert.equal(blocked.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
+
+      const db = await getDb();
+      const proposals = await db
+        .select({
+          id: schema.proposals.id,
+          sourceProposalId: schema.proposals.sourceProposalId,
+        })
+        .from(schema.proposals)
+        .where(eq(schema.proposals.userId, userId));
+
+      assert.equal(proposals.length, 1);
+      assert.equal(
+        proposals.some((row) => row.sourceProposalId === proposalId),
+        false,
+      );
+      assert.equal(stub.sent.length, 1, 'blocked fork should not send a second email');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  test('Starter cannot bypass active quota via owner send-fork', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_send_fork_active_block';
+    const email = 'starter.send.fork.active@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const previousMonth = startOfPreviousUtcMonth();
+    const proposalId = 'starter_send_fork_active_source';
+    await seedProposal(userId, 'starter active send-fork source', {
+      id: proposalId,
+      status: 'sent',
+      partyAEmail: email,
+      partyBEmail: 'alice@example.com',
+      sentAt: previousMonth,
+      createdAt: previousMonth,
+      updatedAt: previousMonth,
+    });
+
+    const stub = stubResendEmail();
+    try {
+      const blocked = await sendProposalViaApi(cookie, proposalId, 'bob@example.com');
+      assert.equal(blocked.status, 429);
+      assert.equal(blocked.body?.error?.code, 'starter_active_opportunities_limit_reached');
+
+      const db = await getDb();
+      const proposals = await db
+        .select({
+          id: schema.proposals.id,
+          sourceProposalId: schema.proposals.sourceProposalId,
+        })
+        .from(schema.proposals)
+        .where(eq(schema.proposals.userId, userId));
+
+      assert.equal(proposals.length, 1);
+      assert.equal(
+        proposals.some((row) => row.sourceProposalId === proposalId),
+        false,
+      );
+      assert.equal(stub.sent.length, 0, 'blocked active fork should fail before email send');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  test('Starter cannot bypass monthly quota via shared-report send-fork', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_shared_report_fork_monthly_block';
+    const email = 'starter.shared.report.fork.monthly@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const stub = stubResendEmail();
+    try {
+      const comparisonResult = await createComparisonViaApi(cookie, {
+        title: 'starter shared-report send-fork monthly',
+      });
+      assert.equal(comparisonResult.status, 201);
+      const comparison = comparisonResult.body?.comparison;
+      const proposalId = comparison?.proposal_id;
+      assert.ok(proposalId);
+
+      const sharedReportResult = await createSharedReportLinkViaApi(cookie, comparison.id, 'alice@example.com');
+      assert.equal(sharedReportResult.status, 201);
+      const token = sharedReportResult.body?.sharedReport?.token || sharedReportResult.body?.token;
+      assert.ok(token);
+
+      const db = await getDb();
+      const sentAt = new Date();
+      await db
+        .update(schema.proposals)
+        .set({
+          status: 'sent',
+          sentAt,
+          partyBEmail: 'alice@example.com',
+          updatedAt: sentAt,
+        })
+        .where(eq(schema.proposals.id, proposalId));
+
+      const blocked = await sendSharedReportViaApi(cookie, token, 'bob@example.com');
+      assert.equal(blocked.status, 429);
+      assert.equal(blocked.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
+
+      const forked = await db
+        .select({ id: schema.proposals.id })
+        .from(schema.proposals)
+        .where(eq(schema.proposals.sourceProposalId, proposalId));
+      assert.equal(forked.length, 0);
+      assert.equal(stub.sent.length, 0, 'blocked shared-report fork should fail before email send');
+    } finally {
+      stub.restore();
+    }
   });
 
   test('Starter creation limit: template-use route is also blocked', async () => {
@@ -209,6 +559,94 @@ if (!hasDatabaseUrl()) {
     const result = await createProposalViaApi(cookie, 'blocked active 2nd');
     assert.equal(result.status, 429);
     assert.equal(result.body?.error?.code, 'starter_active_opportunities_limit_reached');
+  });
+
+  test('Starter active quota cannot be bypassed by archiving an open opportunity', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_archive_active_block';
+    const email = 'starter.archive.active@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const previousMonth = startOfPreviousUtcMonth();
+    await seedProposal(userId, 'active-archive-target', {
+      id: 'starter_archive_active_target',
+      status: 'draft',
+      createdAt: previousMonth,
+      updatedAt: previousMonth,
+    });
+
+    const archived = await archiveProposalViaApi(cookie, 'starter_archive_active_target');
+    assert.equal(archived.status, 200);
+    assert.ok(archived.body?.proposal?.archived_at);
+
+    const blocked = await createProposalViaApi(cookie, 'blocked after archive');
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body?.error?.code, 'starter_active_opportunities_limit_reached');
+    assert.equal(blocked.body?.error?.used, 1);
+  });
+
+  test('Archived open opportunity still counts as active in starter usage snapshots', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_archive_snapshot_count';
+    const email = 'starter.archive.snapshot@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const previousMonth = startOfPreviousUtcMonth();
+    await seedProposal(userId, 'snapshot archived active', {
+      id: 'starter_archive_snapshot_target',
+      status: 'draft',
+      createdAt: previousMonth,
+      updatedAt: previousMonth,
+    });
+
+    const archived = await archiveProposalViaApi(cookie, 'starter_archive_snapshot_target');
+    assert.equal(archived.status, 200);
+
+    const db = await getDb();
+    const snapshot = await getStarterUsageSnapshot(db, {
+      userId,
+      userEmail: email,
+    });
+
+    assert.equal(snapshot?.usage?.activeOpportunities, 1);
+    assert.equal(snapshot?.remaining?.activeOpportunities, 0);
+  });
+
+  test('Starter active quota still applies after soft-deleting an open sent opportunity', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_delete_active_block';
+    const email = 'starter.delete.active@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const previousMonth = startOfPreviousUtcMonth();
+    await seedProposal(userId, 'soft-delete target', {
+      id: 'starter_delete_active_target',
+      status: 'sent',
+      partyAEmail: email,
+      partyBEmail: 'recipient@example.com',
+      sentAt: previousMonth,
+      createdAt: previousMonth,
+      updatedAt: previousMonth,
+    });
+
+    const deleted = await deleteProposalViaApi(cookie, 'starter_delete_active_target');
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body?.deleted, true);
+    assert.equal(deleted.body?.mode, 'soft');
+
+    const blocked = await createProposalViaApi(cookie, 'blocked after soft delete');
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body?.error?.code, 'starter_active_opportunities_limit_reached');
+    assert.equal(blocked.body?.error?.used, 1);
   });
 
   test('Starter review limit: /api/proposals/[id]/evaluate blocks after 3/month', async () => {
@@ -1012,7 +1450,95 @@ if (!hasDatabaseUrl()) {
     assert.equal(body?.error?.used, 1);
   });
 
-  test('Starter active capacity is released after archive semantics mark a row non-active', async () => {
+  test('Template-created proposals write durable proposal.created history that survives hard delete', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_template_created_history';
+    const email = 'starter.template.created.history@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const db = await getDb();
+    await db.insert(schema.templates).values({
+      id: 'template_starter_created_history',
+      userId,
+      name: 'Starter Durable History Template',
+      slug: 'starter-durable-history-template',
+      description: 'Starter durable history template test',
+      category: 'custom',
+      status: 'active',
+      metadata: { template_key: 'starter_created_history_template_key' },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const created = await useTemplateViaApi(cookie, 'template_starter_created_history', {
+      title: 'starter durable template proposal',
+    });
+    assert.equal(created.status, 201);
+    const proposalId = created.body?.proposal?.id;
+    assert.ok(proposalId);
+
+    const history = await db
+      .select({ eventType: schema.proposalEvents.eventType })
+      .from(schema.proposalEvents)
+      .where(eq(schema.proposalEvents.proposalId, proposalId));
+    assert.equal(
+      history.some((row) => row.eventType === 'proposal.created'),
+      true,
+    );
+
+    const deleted = await deleteProposalViaApi(cookie, proposalId);
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body?.mode, 'hard');
+
+    const blocked = await useTemplateViaApi(cookie, 'template_starter_created_history', {
+      title: 'starter durable template proposal retry',
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
+  });
+
+  test('Document-comparison-created proposals write durable proposal.created history that survives hard delete', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_document_comparison_created_history';
+    const email = 'starter.document.comparison.created.history@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const created = await createComparisonViaApi(cookie, {
+      title: 'starter durable document comparison proposal',
+    });
+    assert.equal(created.status, 201);
+    const comparison = created.body?.comparison;
+    const proposalId = comparison?.proposal_id;
+    assert.ok(proposalId);
+
+    const db = await getDb();
+    const history = await db
+      .select({ eventType: schema.proposalEvents.eventType })
+      .from(schema.proposalEvents)
+      .where(eq(schema.proposalEvents.proposalId, proposalId));
+    assert.equal(
+      history.some((row) => row.eventType === 'proposal.created'),
+      true,
+    );
+
+    const deleted = await deleteProposalViaApi(cookie, proposalId);
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body?.mode, 'hard');
+
+    const blocked = await createComparisonViaApi(cookie, {
+      title: 'starter durable document comparison proposal retry',
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
+  });
+
+  test('Starter active capacity is released after a terminal lost outcome', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -1036,10 +1562,57 @@ if (!hasDatabaseUrl()) {
     const db = await getDb();
     await db
       .update(schema.proposals)
-      .set({ archivedByPartyAAt: new Date(), updatedAt: new Date() })
+      .set({
+        status: 'lost',
+        partyAOutcome: 'lost',
+        partyAOutcomeAt: new Date(),
+        closedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(eq(schema.proposals.id, 'active_release_p1'));
 
-    const allowed = await createProposalViaApi(cookie, 'allowed-after-archive');
+    const allowed = await createProposalViaApi(cookie, 'allowed-after-loss');
+    assert.equal(allowed.status, 201);
+    assert.equal(allowed.body?.ok, true);
+  });
+
+  test('Starter active capacity is released after a terminal won outcome', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'starter_active_release_won';
+    const email = 'starter.active.release.won@example.com';
+    const cookie = authCookie(userId, email);
+    await seedUserAndPlan(userId, email, 'starter');
+
+    const previousMonth = startOfPreviousUtcMonth();
+    await seedProposal(userId, 'active-release-won-1', {
+      id: 'active_release_won_p1',
+      status: 'draft',
+      createdAt: previousMonth,
+      updatedAt: previousMonth,
+    });
+
+    const blocked = await createProposalViaApi(cookie, 'blocked-before-won-release');
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body?.error?.code, 'starter_active_opportunities_limit_reached');
+
+    const db = await getDb();
+    const wonAt = new Date();
+    await db
+      .update(schema.proposals)
+      .set({
+        status: 'won',
+        partyAOutcome: 'won',
+        partyAOutcomeAt: wonAt,
+        partyBOutcome: 'won',
+        partyBOutcomeAt: wonAt,
+        closedAt: wonAt,
+        updatedAt: wonAt,
+      })
+      .where(eq(schema.proposals.id, 'active_release_won_p1'));
+
+    const allowed = await createProposalViaApi(cookie, 'allowed-after-won');
     assert.equal(allowed.status, 201);
     assert.equal(allowed.body?.ok, true);
   });

@@ -5,7 +5,7 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
-import { appendProposalHistory } from '../../../_lib/proposal-history.js';
+import { buildProposalInsertWithCreatedHistoryQueries } from '../../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { assertStarterOpportunityCreateAllowed } from '../../../_lib/starter-entitlements.js';
 import { getDefaultTemplateById } from '../_defaults.js';
@@ -146,23 +146,34 @@ export default async function handler(req: any, res: any, templateIdParam?: stri
 
     await assertStarterOpportunityCreateAllowed(db, auth.user.id);
 
-    const [createdProposal] = await db
-      .insert(schema.proposals)
-      .values({
-        id: proposalId,
-        userId: auth.user.id,
-        title,
-        status: 'draft',
-        templateId: effectiveTemplateId,
-        templateName: effectiveTemplateName,
-        partyAEmail: normalizeEmail(auth.user.email) || null,
-        partyBEmail,
-        summary: effectiveTemplateDescription,
-        payload: proposalPayload,
+    const proposalValues = {
+      id: proposalId,
+      userId: auth.user.id,
+      title,
+      status: 'draft',
+      templateId: effectiveTemplateId,
+      templateName: effectiveTemplateName,
+      partyAEmail: normalizeEmail(auth.user.email) || null,
+      partyBEmail,
+      summary: effectiveTemplateDescription,
+      payload: proposalPayload,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const [createdProposalRows] = await db.batch(
+      buildProposalInsertWithCreatedHistoryQueries(db, {
+        proposal: proposalValues,
+        actorUserId: auth.user.id,
+        actorRole: 'party_a',
         createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
+        requestId: context.requestId,
+        eventData: {
+          source: 'template_use',
+          template_id: effectiveTemplateId,
+        },
+      }).queries,
+    );
+    const createdProposal = createdProposalRows[0];
 
     const templateQuestions = template
       ? await db
@@ -211,20 +222,6 @@ export default async function handler(req: any, res: any, templateIdParam?: stri
       },
       createdAt: now,
       updatedAt: now,
-    });
-
-    await appendProposalHistory(db, {
-      proposal: createdProposal,
-      actorUserId: auth.user.id,
-      actorRole: 'party_a',
-      milestone: 'create',
-      eventType: 'proposal.created',
-      createdAt: now,
-      requestId: context.requestId,
-      eventData: {
-        source: 'template_use',
-        template_id: effectiveTemplateId,
-      },
     });
 
     ok(res, 201, {

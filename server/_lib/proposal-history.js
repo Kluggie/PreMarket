@@ -153,6 +153,35 @@ export function buildProposalHistoryQueries(db, params = {}) {
   };
 }
 
+export function buildProposalInsertWithCreatedHistoryQueries(db, params = {}) {
+  const proposal = params.proposal;
+  if (!proposal || typeof proposal !== 'object') {
+    throw new Error('proposal insert with history requires proposal values');
+  }
+
+  const createdAt =
+    params.createdAt instanceof Date
+      ? params.createdAt
+      : parseDateOrNull(proposal.createdAt || proposal.created_at) || new Date();
+  const insertQuery = db.insert(schema.proposals).values(proposal).returning();
+  const historyResult = buildProposalHistoryQueries(db, {
+    ...params,
+    proposal,
+    milestone: params.milestone || 'create',
+    eventType: params.eventType || 'proposal.created',
+    createdAt,
+  });
+
+  return {
+    createdAt,
+    insertQuery,
+    historyQueries: historyResult.queries,
+    versionId: historyResult.versionId,
+    snapshot: historyResult.snapshot,
+    queries: [insertQuery, ...historyResult.queries],
+  };
+}
+
 export async function appendProposalHistory(db, params = {}) {
   const { versionId, snapshot, queries } = buildProposalHistoryQueries(db, params);
   if (queries.length > 0) {

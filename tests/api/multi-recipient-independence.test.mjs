@@ -12,11 +12,38 @@ import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 
 ensureTestEnv();
 
-function makeCookie(seed) {
-  return makeSessionCookie({
-    sub: `${seed}_user`,
+function getOwnerIdentity(seed) {
+  return {
+    userId: `${seed}_user`,
     email: `${seed}@example.com`,
+  };
+}
+
+function makeCookie(seed) {
+  const { userId, email } = getOwnerIdentity(seed);
+  return makeSessionCookie({
+    sub: userId,
+    email,
   });
+}
+
+async function seedUserPlan(seed, plan = 'professional') {
+  const { userId, email } = getOwnerIdentity(seed);
+  const db = getDb();
+  await db.execute(sql`
+    insert into users (id, email)
+    values (${userId}, ${email})
+    on conflict (id) do nothing
+  `);
+  await db.execute(sql`
+    insert into billing_references (user_id, plan, status, updated_at)
+    values (${userId}, ${plan}, 'active', now())
+    on conflict (user_id)
+    do update set
+      plan = excluded.plan,
+      status = excluded.status,
+      updated_at = excluded.updated_at
+  `);
 }
 
 async function createComparison(cookie, input) {
@@ -135,10 +162,11 @@ function stubResendEmail() {
 if (!hasDatabaseUrl()) {
   test('multi-recipient independence (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
-  test('sending same opportunity to two recipients creates independent threads via proposals/[id]/send', async () => {
+  test('professional users can send the same opportunity to two recipients via proposals/[id]/send', async () => {
     await ensureMigrated();
     await resetTables();
 
+    await seedUserPlan('mr_owner', 'professional');
     const ownerCookie = makeCookie('mr_owner');
     const stub = stubResendEmail();
 
@@ -185,8 +213,15 @@ if (!hasDatabaseUrl()) {
         'each recipient must have an independent document comparison',
       );
 
-      // ── Test 2: Original proposal for A is not modified ──
       const db = getDb();
+      const forkHistoryResult = await db.execute(
+        sql`select event_type from proposal_events where proposal_id = ${proposalB.id} order by created_at asc`,
+      );
+      const forkHistory = (forkHistoryResult.rows || forkHistoryResult).map((row) => row.event_type);
+      assert.equal(forkHistory.includes('proposal.created'), true, 'forked proposal must record proposal.created');
+      assert.equal(forkHistory.includes('proposal.sent'), true, 'forked proposal must record proposal.sent');
+
+      // ── Test 2: Original proposal for A is not modified ──
       const originalResult = await db.execute(
         sql`select party_b_email, status from proposals where id = ${proposalA.id}`,
       );
@@ -213,10 +248,11 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('sending same opportunity to two recipients via shared-reports/[token]/send creates independent threads', async () => {
+  test('professional users can send the same opportunity to two recipients via shared-reports/[token]/send', async () => {
     await ensureMigrated();
     await resetTables();
 
+    await seedUserPlan('mr_sr_owner', 'professional');
     const ownerCookie = makeCookie('mr_sr_owner');
     const stub = stubResendEmail();
 
@@ -278,15 +314,23 @@ if (!hasDatabaseUrl()) {
         comparison.id,
         'forked proposal must have a separate document comparison',
       );
+
+      const forkHistoryResult = await db.execute(
+        sql`select event_type from proposal_events where proposal_id = ${forkedProposal.id} order by created_at asc`,
+      );
+      const forkHistory = (forkHistoryResult.rows || forkHistoryResult).map((row) => row.event_type);
+      assert.equal(forkHistory.includes('proposal.created'), true, 'forked shared-report proposal must record proposal.created');
+      assert.equal(forkHistory.includes('proposal.sent'), true, 'forked shared-report proposal must record proposal.sent');
     } finally {
       stub.restore();
     }
   });
 
-  test('resending to the SAME recipient does not fork', async () => {
+  test('paid resend to the SAME recipient does not fork', async () => {
     await ensureMigrated();
     await resetTables();
 
+    await seedUserPlan('mr_resend_owner', 'professional');
     const ownerCookie = makeCookie('mr_resend_owner');
     const stub = stubResendEmail();
 

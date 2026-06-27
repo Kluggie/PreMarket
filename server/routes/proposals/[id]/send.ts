@@ -9,7 +9,11 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
-import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
+import {
+  buildProposalHistoryQueries,
+  buildProposalInsertWithCreatedHistoryQueries,
+} from '../../../_lib/proposal-history.js';
+import { assertStarterOpportunityCreateAllowed } from '../../../_lib/starter-entitlements.js';
 import {
   buildProposalThreadActivityValues,
   PROPOSAL_THREAD_ACTIVITY_SENT,
@@ -207,14 +211,6 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     const createShareLink = body.createShareLink !== false;
     const isPrivateMode = Boolean((existing as any).isPrivateMode);
-    const emailProviderMessageId = await sendProposalEmail({
-      recipientEmail,
-      senderEmail: auth.user.email,
-      proposalTitle: existing.title,
-      isPrivateMode,
-    });
-
-    const sentAt = new Date();
 
     // ── Multi-recipient independence: fork when sending to a different person ──
     // If the proposal was already sent to a different recipient, clone it so
@@ -226,37 +222,59 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         existingRecipient !== recipientEmail,
     );
 
+    const sentAt = new Date();
+    if (needsFork) {
+      await assertStarterOpportunityCreateAllowed(db, auth.user.id, sentAt);
+    }
+
+    const emailProviderMessageId = await sendProposalEmail({
+      recipientEmail,
+      senderEmail: auth.user.email,
+      proposalTitle: existing.title,
+      isPrivateMode,
+    });
+
     let targetProposal = existing;
 
     if (needsFork) {
       const forkedProposalId = newId('proposal');
       let forkedComparisonId: string | null = null;
-
-      // Create forked proposal first (before comparison, to satisfy FK)
-      const [forkedRow] = await db
-        .insert(schema.proposals)
-        .values({
-          id: forkedProposalId,
-          userId: existing.userId,
-          title: existing.title,
-          status: 'draft',
-          statusReason: existing.statusReason,
-          templateId: existing.templateId,
-          templateName: existing.templateName,
-          proposalType: existing.proposalType,
-          draftStep: existing.draftStep,
-          sourceProposalId: existing.id,
-          documentComparisonId: null,
-          partyAEmail: existing.partyAEmail,
-          partyBEmail: recipientEmail,
-          partyBName: null,
-          summary: existing.summary,
-          isPrivateMode: existing.isPrivateMode,
-          payload: existing.payload,
+      const forkedProposalValues = {
+        id: forkedProposalId,
+        userId: existing.userId,
+        title: existing.title,
+        status: 'draft',
+        statusReason: existing.statusReason,
+        templateId: existing.templateId,
+        templateName: existing.templateName,
+        proposalType: existing.proposalType,
+        draftStep: existing.draftStep,
+        sourceProposalId: existing.id,
+        documentComparisonId: null,
+        partyAEmail: existing.partyAEmail,
+        partyBEmail: recipientEmail,
+        partyBName: null,
+        summary: existing.summary,
+        isPrivateMode: existing.isPrivateMode,
+        payload: existing.payload,
+        createdAt: sentAt,
+        updatedAt: sentAt,
+      };
+      const [forkedRows] = await db.batch(
+        buildProposalInsertWithCreatedHistoryQueries(db, {
+          proposal: forkedProposalValues,
+          actorUserId: auth.user.id,
+          actorRole: 'party_a',
           createdAt: sentAt,
-          updatedAt: sentAt,
-        })
-        .returning();
+          requestId: context.requestId,
+          eventData: {
+            source: 'proposal_send_fork',
+            forked_from_proposal_id: existing.id,
+            recipient_email: recipientEmail,
+          },
+        }).queries,
+      );
+      const forkedRow = forkedRows[0];
 
       // Clone document comparison if one exists
       if (existing.documentComparisonId) {

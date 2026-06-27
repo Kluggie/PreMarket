@@ -68,6 +68,15 @@ test('starter error helper maps backend limit codes to user copy', () => {
     },
   };
 
+  const activeLimitError = {
+    body: {
+      error: {
+        code: 'starter_active_opportunities_limit_reached',
+        plan: 'starter',
+      },
+    },
+  };
+
   const nonStarterError = {
     body: {
       error: {
@@ -82,10 +91,8 @@ test('starter error helper maps backend limit codes to user copy', () => {
     'starter_opportunities_monthly_limit_reached',
   );
   assert.equal(
-    getStarterLimitErrorCopy(opportunityLimitError, 'create')?.includes(
-      String(STARTER_PLAN_LIMITS.opportunitiesPerMonth),
-    ),
-    true,
+    getStarterLimitErrorCopy(opportunityLimitError, 'create'),
+    "You've reached the Starter limit of 1 opportunity this month. Archiving does not reset monthly usage.",
   );
   assert.equal(
     getStarterLimitErrorCopy(uploadLimitError, 'upload')?.includes('25 MB'),
@@ -96,6 +103,10 @@ test('starter error helper maps backend limit codes to user copy', () => {
       String(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth),
     ),
     true,
+  );
+  assert.equal(
+    getStarterLimitErrorCopy(activeLimitError, 'create'),
+    "You've reached the Starter limit of 1 active opportunity. Closing an opportunity frees the active slot; archiving only hides it from your main view.",
   );
   assert.equal(getStarterLimitErrorCopy(nonStarterError, 'create'), null);
   assert.equal(getStarterLimitErrorCopy({ code: 'validation_failed' }, 'create'), null);

@@ -41,11 +41,11 @@ export function getStarterLimitErrorCopy(error, context = 'general') {
   }
 
   if (code === 'starter_opportunities_monthly_limit_reached') {
-    return `Starter allows ${formatCount(STARTER_PLAN_LIMITS.opportunitiesPerMonth)} new opportunities per month. You can create another next month or upgrade your plan.`;
+    return `You've reached the Starter limit of ${formatCount(STARTER_PLAN_LIMITS.opportunitiesPerMonth)} opportunity this month. Archiving does not reset monthly usage.`;
   }
 
   if (code === 'starter_active_opportunities_limit_reached') {
-    return `Starter allows ${formatCount(STARTER_PLAN_LIMITS.activeOpportunities)} active opportunities at once. Close or archive one, then try again.`;
+    return `You've reached the Starter limit of ${formatCount(STARTER_PLAN_LIMITS.activeOpportunities)} active opportunity. Closing an opportunity frees the active slot; archiving only hides it from your main view.`;
   }
 
   if (code === 'starter_ai_evaluations_monthly_limit_reached') {
