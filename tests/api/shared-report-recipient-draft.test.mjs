@@ -2571,6 +2571,17 @@ if (!hasDatabaseUrl()) {
 
       const sendRound2 = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
       assert.equal(sendRound2.statusCode, 200);
+      const ownerReturnToken = String(sendRound2.jsonBody()?.return_link?.token || '');
+      assert.notEqual(ownerReturnToken, '');
+
+      const ownerReturnLink = await getSharedLinkRowByToken(ownerReturnToken);
+      const ownerReturnMetadata =
+        ownerReturnLink?.report_metadata &&
+        typeof ownerReturnLink.report_metadata === 'object' &&
+        !Array.isArray(ownerReturnLink.report_metadata)
+          ? ownerReturnLink.report_metadata
+          : {};
+      assert.equal(ownerReturnMetadata.allow_recipient_ai_review, false);
 
       capturedInputs.length = 0;
       const ownerEvaluateRes = await evaluateComparison(comparison.id, ownerCookie, {});
@@ -3167,6 +3178,14 @@ if (!hasDatabaseUrl()) {
       assert.equal(ownerSendBackRes.statusCode, 200);
       const recipientRoundTwoToken = String(ownerSendBackRes.jsonBody()?.return_link?.token || '');
       assert.notEqual(recipientRoundTwoToken, '');
+      const recipientRoundTwoLink = await getSharedLinkRowByToken(recipientRoundTwoToken);
+      const recipientRoundTwoMetadata =
+        recipientRoundTwoLink?.report_metadata &&
+        typeof recipientRoundTwoLink.report_metadata === 'object' &&
+        !Array.isArray(recipientRoundTwoLink.report_metadata)
+          ? recipientRoundTwoLink.report_metadata
+          : {};
+      assert.equal(recipientRoundTwoMetadata.allow_recipient_ai_review, false);
 
       const secondSaveRes = await saveRecipientDraft(recipientRoundTwoToken, {
         shared_payload: {
@@ -3180,6 +3199,21 @@ if (!hasDatabaseUrl()) {
         workflow_step: 2,
       }, recipientCookie);
       assert.equal(secondSaveRes.statusCode, 200);
+
+      const disabledLaterRoundEvaluateRes = await evaluateRecipientDraft(
+        recipientRoundTwoToken,
+        {},
+        recipientCookie,
+        { engine: 'v2' },
+      );
+      assert.equal(disabledLaterRoundEvaluateRes.statusCode, 403);
+      assert.equal(disabledLaterRoundEvaluateRes.jsonBody()?.error?.code, 'recipient_ai_review_not_enabled');
+
+      const enableLaterRoundReviewRes = await updateSharedReportLink(recipientRoundTwoToken, ownerCookie, {
+        allowRecipientAiReview: true,
+      });
+      assert.equal(enableLaterRoundReviewRes.statusCode, 200);
+      assert.equal(enableLaterRoundReviewRes.jsonBody()?.sharedReport?.allow_recipient_ai_review, true);
 
       const secondEvaluateRes = await evaluateRecipientDraft(recipientRoundTwoToken, {}, recipientCookie, { engine: 'v2' });
       assert.equal(secondEvaluateRes.statusCode, 200);
