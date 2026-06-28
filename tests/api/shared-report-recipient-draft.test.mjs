@@ -3253,12 +3253,26 @@ if (!hasDatabaseUrl()) {
       assert.equal(typeof diagnostics.runtimeBudgetExhausted, 'boolean');
       assert.equal(typeof diagnostics.runtimePhaseElapsedMs, 'object');
       assert.equal(typeof diagnostics.narrativeWordCount, 'number');
+      const savedContextEstimate = evaluationRows.rows[0]?.result_json?.input_trace?.context_estimate || {};
+      assert.equal(typeof savedContextEstimate.totalEstimatedInputTokens, 'number');
+      assert.equal(savedContextEstimate.includedPriorRounds >= 1, true);
+      assert.equal(typeof savedContextEstimate.retrievedChunkCount, 'number');
+      assert.notEqual(savedContextEstimate.capacityLabel, 'Very Light');
 
-      const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+      const workspaceRes = await getRecipientWorkspace(recipientRoundTwoToken, recipientCookie);
       assert.equal(workspaceRes.statusCode, 200);
       assert.equal(
         'evaluation_diagnostics' in (workspaceRes.jsonBody()?.latestEvaluation?.result_json || {}),
         false,
+      );
+      const workspaceContextEstimate = workspaceRes.jsonBody()?.review_context_estimate || {};
+      assert.equal(typeof workspaceContextEstimate.totalEstimatedInputTokens, 'number');
+      assert.equal(workspaceContextEstimate.includedPriorRounds >= 1, true);
+      assert.equal(typeof workspaceContextEstimate.retrievedChunkCount, 'number');
+      assert.equal(
+        workspaceContextEstimate.totalEstimatedInputTokens >
+          workspaceContextEstimate.currentBundleEstimatedTokens,
+        true,
       );
     } finally {
       cleanup();

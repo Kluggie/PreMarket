@@ -125,6 +125,10 @@ test('recipient Step 3 review package receives current round bundle data', async
     reviewPkgBlock.includes('step3Bundles.shared'),
     'Review package must use step3Bundles.shared (current round data)',
   );
+  assert.ok(
+    reviewPkgBlock.includes('reviewContextEstimate={reviewContextEstimate}'),
+    'Review package must receive the workspace reviewContextEstimate for later-round AI load accounting',
+  );
 });
 
 test('recipient Step 3 review package has Run AI Mediation action', async () => {
@@ -133,7 +137,7 @@ test('recipient Step 3 review package has Run AI Mediation action', async () => 
   const reviewPkgStart = source.indexOf('<Step3ReviewPackage');
   assert.ok(reviewPkgStart >= 0);
 
-  const reviewPkgBlock = source.slice(reviewPkgStart, reviewPkgStart + 800);
+  const reviewPkgBlock = source.slice(reviewPkgStart, reviewPkgStart + 1200);
 
   assert.ok(
     reviewPkgBlock.includes('onRunEvaluation={runEvaluationFromReview}'),

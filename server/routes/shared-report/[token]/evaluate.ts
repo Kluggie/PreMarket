@@ -49,6 +49,7 @@ import {
   PROMPT_TOKEN_HARD_CEILING,
   type ExchangeRoundSnapshot,
 } from '../../../_lib/evaluation-context-budget.js';
+import { buildMediationContextEstimate } from '../../../../src/lib/mediationContextLoad.js';
 import {
   DRAFT_STATUS,
   RECIPIENT_ROLE,
@@ -552,7 +553,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     ];
     const sharedText = formatContributionsForAi(sharedHistoryEntriesForAi);
     const confidentialBundle = formatContributionsForAi(confidentialHistoryEntriesForAi);
-    const sharedHtml = buildSharedHistoryComposite([
+    const priorRoundText = formatContributionsForAi(
+      sharedHistory.contributions.filter((entry) => {
+        const roundNumber = Number(entry?.roundNumber || 0);
+        return Number.isFinite(roundNumber) && roundNumber >= 1 && roundNumber < outgoingRoundNumber;
+      }),
+    );
+    const visibleSharedBundle = buildSharedHistoryComposite([
       ...sharedHistory.sharedEntries,
       ...draftSharedEntries.map((entry) => ({
         id: entry.id,
@@ -563,7 +570,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         source: entry.contentPayload?.source || 'typed',
         files: entry.contentPayload?.files || [],
       })),
-    ]).html;
+    ]);
+    const sharedHtml = visibleSharedBundle.html;
 
     // ── Exchange history: include previous rounds' shared text ──────────────
     const exchangeHistory = await getExchangeHistory(resolved.db, {
@@ -1026,6 +1034,46 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       });
 
       const completedAt = new Date();
+      const omittedDueToCapacity = [];
+      if (budgeted.budget.trimmedFromShared > 0) {
+        omittedDueToCapacity.push(`${budgeted.budget.trimmedFromShared.toLocaleString()} shared chars trimmed`);
+      }
+      if (budgeted.budget.trimmedFromConfidential > 0) {
+        omittedDueToCapacity.push(`${budgeted.budget.trimmedFromConfidential.toLocaleString()} confidential chars trimmed`);
+      }
+      if (Number(evaluationDiagnostics.omittedEvidenceCount || 0) > 0) {
+        omittedDueToCapacity.push(`${Number(evaluationDiagnostics.omittedEvidenceCount || 0).toLocaleString()} retrieved chunks omitted`);
+      }
+      if (Boolean(v2Preflight.trimTriggered)) {
+        omittedDueToCapacity.push('prompt tightened during token preflight');
+      }
+      const priorRoundNumbers = new Set(
+        sharedHistory.contributions
+          .map((entry) => Number(entry?.roundNumber || 0))
+          .filter((roundNumber) => Number.isFinite(roundNumber) && roundNumber >= 1 && roundNumber < outgoingRoundNumber),
+      );
+      const reviewContextEstimate = buildMediationContextEstimate({
+        visibleSharedText: visibleSharedBundle.text || '',
+        visibleConfidentialText: currentRoundRecipientConfidentialText,
+        directSharedText: evaluationSharedText,
+        directConfidentialText: evaluationConfidentialText,
+        priorRoundText,
+        summaryMemoryText: [
+          convergenceDigest?.digestText || '',
+          priorBilateralRounds.length > 0 && mediationRoundContext ? JSON.stringify(mediationRoundContext) : '',
+        ].filter(Boolean).join('\n'),
+        retrievedChunkCount: Number(evaluationDiagnostics.evidenceCount || 0),
+        retrievedContextTokens: Number(evaluationDiagnostics.evidenceBudgetUsed || 0),
+        includedPriorRounds: priorRoundNumbers.size,
+        omittedDueToCapacity,
+        estimatorMode: 'evaluate_runtime',
+      });
+      if (process.env.NODE_ENV !== 'production') {
+        logEvaluationRuntime(context, 'review_context_estimate', {
+          evaluationId: evaluationRunId,
+          contextEstimate: reviewContextEstimate,
+        });
+      }
       const completedEvaluationDiagnostics = {
         ...evaluationDiagnostics,
         evaluatorElapsedMs: Date.now() - evaluatorStartedAt,
@@ -1072,6 +1120,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               convergence_digest_chars: convergenceDigest?.digestChars || 0,
               convergence_open_questions: convergenceDigest?.openQuestions?.length || 0,
               convergence_resolved_questions: convergenceDigest?.resolvedQuestions?.length || 0,
+              context_estimate: reviewContextEstimate,
             },
             review_idempotency_key: reviewIdempotencyKey,
             exchange_history: normalizedExchangeHistory.map((round) => ({

@@ -639,6 +639,7 @@ export default function SharedReport() {
   const baseline = workspaceQuery.data?.baseline || {};
   const defaults = workspaceQuery.data?.defaults || {};
   const sharedHistory = workspaceQuery.data?.sharedHistory || null;
+  const reviewContextEstimate = workspaceQuery.data?.reviewContextEstimate || null;
   const activityHistory = Array.isArray(workspaceQuery.data?.activityHistory)
     ? workspaceQuery.data.activityHistory
     : [];
@@ -3411,6 +3412,7 @@ export default function SharedReport() {
               documents={allDisplayDocuments}
               confidentialBundle={step3Bundles.confidential}
               sharedBundle={step3Bundles.shared}
+              reviewContextEstimate={reviewContextEstimate}
               isFinishing={step3IsEvaluationRunning}
               finishStage={step3IsEvaluationRunning ? 'evaluating' : 'idle'}
               exceedsAnySizeLimit={false}
