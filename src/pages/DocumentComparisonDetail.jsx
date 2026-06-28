@@ -780,12 +780,12 @@ export default function DocumentComparisonDetail() {
       await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
       toast.success(
         variables?.allowRecipientAiReview
-          ? 'Recipient AI reviews enabled'
-          : 'Recipient AI reviews disabled',
+          ? 'Recipient extra AI review enabled'
+          : 'Recipient extra AI review disabled',
       );
     },
     onError: (error) => {
-      toast.error(error?.message || 'Failed to update recipient AI review access');
+      toast.error(error?.message || 'Failed to update recipient extra AI review access');
     },
   });
 
@@ -1362,9 +1362,9 @@ export default function DocumentComparisonDetail() {
               <div className="rounded-lg border border-slate-200 bg-white p-3">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium text-slate-900">Allow recipient AI reviews</p>
+                    <p className="text-sm font-medium text-slate-900">Allow Recipient to Run Extra AI Review</p>
                     <p className="text-xs text-slate-600">
-                      When enabled, the recipient can run full AI mediation reviews. These count against your plan&apos;s monthly review limit.
+                      When enabled, the recipient can run an additional full AI mediation review from their side. This counts against your monthly AI review limit, but responding and sending back remain available either way.
                     </p>
                   </div>
                   <Switch
@@ -1380,11 +1380,11 @@ export default function DocumentComparisonDetail() {
                         allowRecipientAiReview: checked,
                       })
                     }
-                    aria-label="Allow recipient AI reviews"
+                    aria-label="Allow Recipient to Run Extra AI Review"
                   />
                 </div>
                 {updateShareSettingsMutation.isPending ? (
-                  <p className="mt-2 text-xs text-slate-500">Saving recipient AI review access...</p>
+                  <p className="mt-2 text-xs text-slate-500">Saving recipient extra AI review access...</p>
                 ) : null}
               </div>
 

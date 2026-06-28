@@ -78,9 +78,9 @@ const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
 const RECIPIENT_AI_REVIEW_NOT_ENABLED_MESSAGE =
-  'The proposal owner has not enabled recipient AI reviews for this link.';
+  'The owner has not enabled extra AI review for this link. You can still edit and send your response.';
 const RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE =
-  'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
+  'An extra AI review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
 
 function logEvaluationRuntime(
   context: any,

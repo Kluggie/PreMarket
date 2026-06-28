@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSharedReportTurnCopy,
+  getRecipientExtraAiReviewActionLabel,
   getContextualPartyLabel,
   getCounterpartyRole,
   getSharedReportSendActionLabel,
@@ -16,8 +17,8 @@ test('send direction: proposer editing targets recipient (default neutral labels
   assert.equal(copy.sendCtaLabel, 'Send to the other party');
   assert.equal(copy.sentCtaLabel, 'Sent to the other party');
   assert.equal(copy.signInToSendLabel, 'Please sign in to send updates to the other party.');
-  assert.equal(copy.step3Description, 'Run and review your AI mediation review.');
-  assert.equal(copy.noReportMessage, 'No mediation review is available yet. Run AI Mediation to generate one.');
+  assert.equal(copy.step3Description, 'Review your response package, then optionally run an extra AI review before sending.');
+  assert.equal(copy.noReportMessage, 'No extra AI review has been generated yet. You can still edit and send your response.');
   assert.equal(copy.proposalDetailsDescription, 'Read-only current opportunity state after your edits.');
 });
 
@@ -38,7 +39,19 @@ test('send direction: counterpartyName overrides neutral fallback', () => {
   assert.equal(copy.sentCtaLabel, 'Sent to Acme Corp');
   assert.equal(copy.signInToSendLabel, 'Please sign in to send updates to Acme Corp.');
   // Actor-side labels always use "your" regardless
-  assert.equal(copy.step3Description, 'Run and review your AI mediation review.');
+  assert.equal(copy.step3Description, 'Review your response package, then optionally run an extra AI review before sending.');
+});
+
+test('recipient extra AI review labels distinguish optional review from send-back flow', () => {
+  assert.equal(getRecipientExtraAiReviewActionLabel(), 'Run Extra AI Review');
+  assert.equal(
+    getRecipientExtraAiReviewActionLabel({ hasExisting: true }),
+    'Re-run Extra AI Review',
+  );
+  assert.equal(
+    getRecipientExtraAiReviewActionLabel({ isPending: true }),
+    'Running Extra AI Review...',
+  );
 });
 
 test('send direction: roles flip correctly over repeated back-and-forth rounds', () => {

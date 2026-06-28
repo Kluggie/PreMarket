@@ -396,7 +396,7 @@ export default async function handler(req: any, res: any) {
   }
 
   const sharedReportsMatch = pathname.match(/^\/api\/sharedReports\/([^/]+)$/);
-  if (sharedReportsMatch && method === 'GET') {
+  if (sharedReportsMatch && (method === 'GET' || method === 'PATCH')) {
     const token = decodeURIComponent(sharedReportsMatch[1]);
     return sharedReportsTokenHandler(req, res, token);
   }

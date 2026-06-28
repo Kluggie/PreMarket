@@ -57,6 +57,18 @@ test('POST /api/shared-report/:token/evaluate dispatches to the evaluate route i
   assert.notEqual(body.error?.message, 'Route not found');
 });
 
+test('PATCH /api/sharedReports/:token dispatches to the owner toggle route instead of falling through as not_found', async () => {
+  const res = await invokeApiIndex({
+    method: 'PATCH',
+    path: 'sharedReports/test-token',
+  });
+  const body = res.jsonBody();
+
+  assert.notEqual(res.statusCode, 404);
+  assert.notEqual(body.error?.code, 'not_found');
+  assert.notEqual(body.error?.message, 'Route not found');
+});
+
 if (!hasDatabaseUrl()) {
   test('POST /api/shared-report/:token/evaluate reaches evaluator path (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
@@ -95,6 +107,7 @@ if (!hasDatabaseUrl()) {
         canEdit: true,
         canEditConfidential: true,
         canReevaluate: true,
+        allowRecipientAiReview: true,
       },
     });
     assert.equal(createLinkRes.statusCode, 201);

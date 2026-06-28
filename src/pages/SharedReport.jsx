@@ -76,7 +76,6 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import {
-  getRunOpportunityReviewLabel,
   getReviewStageLabel,
   MEDIATION_REVIEW_LABEL,
 } from '@/lib/aiReportUtils';
@@ -84,6 +83,7 @@ import { MEDIATION_REVIEW_STAGE, resolveOpportunityReviewStage } from '@/lib/opp
 import {
   buildSharedReportTurnCopy,
   getContextualPartyLabel,
+  getRecipientExtraAiReviewActionLabel,
   getSharedReportSendActionLabel,
 } from '@/lib/sharedReportSendDirection';
 import {
@@ -105,6 +105,7 @@ import {
   CheckCircle2,
   Loader2,
   Send,
+  Sparkles,
   XCircle,
 } from 'lucide-react';
 
@@ -441,24 +442,24 @@ function toFriendlyEvaluateError(error) {
     code === 'request_timeout' ||
     code === 'function_invocation_timeout'
   ) {
-    return 'AI mediation took too long to complete. Please retry in a moment.';
+    return 'The extra AI review took too long to complete. Please retry in a moment.';
   }
   if (code === 'recipient_ai_review_not_enabled') {
-    return 'The proposal owner has not enabled recipient AI reviews for this link.';
+    return 'The owner has not enabled extra AI review for this link. You can still edit and send your response.';
   }
   if (code === 'recipient_rereview_limit_reached') {
-    return 'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
+    return 'An extra AI review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
   }
   if (
     code === 'starter_ai_evaluations_monthly_limit_reached' ||
     code === 'ai_mediation_reviews_monthly_limit_reached'
   ) {
-    return 'This opportunity owner has reached their monthly AI mediation review limit. You can still view and reply, but a new AI mediation review cannot be generated right now.';
+    return 'This opportunity owner has reached their monthly AI review limit. You can still view and reply, but a new extra AI review cannot be generated right now.';
   }
   if (code === 'not_configured') {
-    return 'AI mediation is not configured in this environment yet.';
+    return 'Extra AI review is not configured in this environment yet.';
   }
-  return error?.message || 'Unable to run AI mediation.';
+  return error?.message || 'Unable to run extra AI review.';
 }
 
 function toFriendlySendBackError(error, sendTargetNoun = 'the other party') {
@@ -1506,9 +1507,9 @@ export default function SharedReport() {
       setStep(3);
       if (!alreadyHandled) {
         if (generationFailed) {
-          toast.error('AI mediation could not be completed. Please retry.');
+          toast.error('Extra AI review could not be completed. Please retry.');
         } else {
-          toast.success('AI mediation review ready');
+          toast.success('Extra AI review ready');
         }
       }
       await workspaceQuery.refetch();
@@ -1549,9 +1550,9 @@ export default function SharedReport() {
         setStep(3);
         if (!alreadyHandled) {
           if (generationFailed) {
-            toast.error('AI mediation could not be completed. Please retry.');
+            toast.error('Extra AI review could not be completed. Please retry.');
           } else {
-            toast.success('AI mediation review ready');
+            toast.success('Extra AI review ready');
           }
         }
         return;
@@ -1565,7 +1566,7 @@ export default function SharedReport() {
       ) {
         evaluationRequestRef.current.activeEvaluationId = asText(run?.id);
         setEvaluationPollingActive(true);
-        toast.info('AI mediation is taking longer than expected. This page will keep checking.');
+        toast.info('The extra AI review is taking longer than expected. This page will keep checking.');
         return;
       }
       setEvaluationPollingActive(false);
@@ -1615,9 +1616,9 @@ export default function SharedReport() {
       setShowStep3Results(!generationFailed);
       setStep(3);
       if (generationFailed) {
-        toast.error('AI mediation could not be completed. Please retry.');
+        toast.error('Extra AI review could not be completed. Please retry.');
       } else {
-        toast.success('AI mediation review ready');
+        toast.success('Extra AI review ready');
       }
       return;
     }
@@ -1632,7 +1633,7 @@ export default function SharedReport() {
       if (requestState.handledEvaluationId !== asText(run.id)) {
         evaluationRequestRef.current.handledEvaluationId = asText(run.id);
         toast.error(
-          asText(run?.error_message) || 'AI mediation could not be completed. Please retry.',
+          asText(run?.error_message) || 'Extra AI review could not be completed. Please retry.',
         );
       }
       return;
@@ -1648,7 +1649,7 @@ export default function SharedReport() {
       setEvaluationPollingTimedOut(true);
       if (requestState.handledEvaluationId !== asText(run.id)) {
         evaluationRequestRef.current.handledEvaluationId = asText(run.id);
-        toast.error('AI mediation did not finish in time. Please retry.');
+        toast.error('The extra AI review did not finish in time. Please retry.');
       }
     }
   }, [
@@ -1983,16 +1984,16 @@ export default function SharedReport() {
 
   const runEvaluationFromReview = async () => {
     if (requiresRecipientVerification) {
-      toast.error('Verify access before running AI mediation.');
+      toast.error('Verify access before running the extra AI review.');
       setStep(0);
       return;
     }
     if (!canRunRecipientAiReview) {
-      toast.error('The proposal owner has not enabled recipient AI reviews for this link.');
+      toast.error('The owner has not enabled extra AI review for this link. You can still edit and send your response.');
       return;
     }
     const confirmed = window.confirm(
-      "This will use the opportunity owner's AI mediation review credits.",
+      "This will run an extra AI review using the opportunity owner's AI mediation review credits.",
     );
     if (!confirmed) {
       return;
@@ -2773,7 +2774,7 @@ export default function SharedReport() {
       latestEvaluation?.error_message ||
         latestEvaluation?.result_json?.error?.message ||
         latestEvaluation?.result?.error?.message,
-    ) || 'AI mediation could not be completed. Please retry.';
+    ) || 'Extra AI review could not be completed. Please retry.';
   const latestEvaluationTimelineTone = step3IsEvaluationFailed
     ? 'danger'
     : step3IsEvaluationRunning
@@ -3004,7 +3005,7 @@ export default function SharedReport() {
       suggestionThreads={suggestionThreads}
       supplementaryAlert={
         <p className="text-xs text-amber-700">
-          Full AI mediation reviews use the opportunity owner's AI mediation review credits.
+          Extra AI reviews use the opportunity owner's AI mediation review credits.
         </p>
       }
       visibleCoachSuggestions={visibleCoachSuggestions}
@@ -3344,6 +3345,7 @@ export default function SharedReport() {
                     type="button"
                     onClick={sendToCounterparty}
                     disabled={
+                      step3IsEvaluationRunning ||
                       sendBackMutation.isPending ||
                       saveDraftMutation.isPending ||
                       !canSendBack ||
@@ -3419,22 +3421,60 @@ export default function SharedReport() {
               saveDraftPending={saveDraftMutation.isPending}
               evaluationFailureMessage={
                 isGenerationFailureFallback(updatedRecipientReport)
-                  ? 'The AI mediation brief could not be completed. No substantive mediation result was produced. Please retry.'
+                  ? 'The extra AI review could not be completed. No substantive mediation result was produced. Please retry.'
                   : ''
               }
               onBack={() => setStep(2)}
               onRunEvaluation={runEvaluationFromReview}
-              runActionDisabled={!canRunRecipientAiReview}
+              actionSlot={
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {canRunRecipientAiReview ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={runEvaluationFromReview}
+                      disabled={step3IsEvaluationRunning || saveDraftMutation.isPending}
+                      data-testid="step3-run-extra-ai-review-button"
+                    >
+                      {step3IsEvaluationRunning
+                        ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        : <Sparkles className="w-4 h-4 mr-2" />}
+                      {getRecipientExtraAiReviewActionLabel({
+                        isPending: step3IsEvaluationRunning,
+                        hasExisting: Boolean(latestEvaluation),
+                      })}
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    onClick={sendToCounterparty}
+                    disabled={
+                      sendBackMutation.isPending ||
+                      saveDraftMutation.isPending ||
+                      !canSendBack ||
+                      Boolean(parentThreadState?.isClosed) ||
+                      isSentToCounterparty ||
+                      requiresRecipientVerification
+                    }
+                  >
+                    {sendBackMutation.isPending
+                      ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      : <Send className="w-4 h-4 mr-2" />}
+                    {getSharedReportSendActionLabel(draftDocumentOwner, {
+                      isSent: isSentToCounterparty,
+                      isPending: sendBackMutation.isPending,
+                      counterpartyName: counterpartyDisplayName,
+                    })}
+                  </Button>
+                </div>
+              }
+              showRunAction={false}
               runActionDisabledMessage={
                 canRunRecipientAiReview
                   ? ''
-                  : 'The proposal owner has not enabled recipient AI reviews for this link.'
+                  : 'The owner has not enabled extra AI review for this link. You can still edit and send your response.'
               }
-              runActionLabel={getRunOpportunityReviewLabel({
-                stage: MEDIATION_REVIEW_STAGE,
-                isPending: step3IsEvaluationRunning,
-                hasExisting: Boolean(latestEvaluation),
-              })}
+              backLabel="Edit again"
             />
           )
         ) : null}

@@ -1129,6 +1129,72 @@ if (!hasDatabaseUrl()) {
     }
   });
 
+  test('Recipient can still save and send back when extra AI review is disabled, and send-back does not create a full review run', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('p2_send_without_extra_review');
+    const recipientEmail = 'send-without-extra-review@example.com';
+    const recipientCookie = makeRecipientCookie('p2_send_without_extra_review', recipientEmail);
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Send Without Extra Review',
+      docAText: 'Owner confidential baseline for send-without-review coverage.',
+      docBText: 'Shared baseline text that the recipient can revise and send back without extra AI review.',
+    });
+
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      canSendBack: true,
+      allowRecipientAiReview: false,
+    });
+
+    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+    assert.equal(workspaceRes.statusCode, 200);
+    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, false);
+    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_send_back, true);
+
+    const saveRes = await saveRecipientDraft(link.token, {
+      shared_payload: {
+        label: 'Shared Information',
+        text: 'Recipient response can still be drafted and sent even though extra AI review is disabled.',
+      },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Recipient confidential notes for a send-only response path.',
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(saveRes.statusCode, 200);
+
+    const blockedEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(blockedEvaluateRes.statusCode, 403);
+    assert.equal(blockedEvaluateRes.jsonBody()?.error?.code, 'recipient_ai_review_not_enabled');
+
+    const sendBackRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(sendBackRes.statusCode, 200);
+    assert.equal(sendBackRes.jsonBody()?.status, 'sent');
+
+    const db = getDb();
+    const reviewRunRows = await db.execute(sql`
+      select id, status
+      from shared_report_evaluation_runs
+      where shared_link_id = (select id from shared_links where token = ${link.token})
+      order by created_at asc
+    `);
+    assert.equal(reviewRunRows.rows.length, 0);
+
+    const sentRevisionRows = await db.execute(sql`
+      select status
+      from shared_report_recipient_revisions
+      where shared_link_id = (select id from shared_links where token = ${link.token})
+      order by created_at desc
+      limit 1
+    `);
+    assert.equal(sentRevisionRows.rows.length, 1);
+    assert.equal(String(sentRevisionRows.rows[0]?.status || ''), 'sent');
+  });
+
   test('Non-owner cannot toggle recipient AI review access', async () => {
     await ensureMigrated();
     await resetTables();
@@ -2771,7 +2837,7 @@ if (!hasDatabaseUrl()) {
       assert.equal(cappedEvaluateRes.jsonBody()?.error?.code, 'recipient_rereview_limit_reached');
       assert.equal(
         cappedEvaluateRes.jsonBody()?.error?.message,
-        'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
+        'An extra AI review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
       );
       assert.equal(evaluatorCallCount, 2);
 

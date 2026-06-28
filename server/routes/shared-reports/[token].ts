@@ -71,7 +71,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         throw new ApiError(404, 'token_not_found', 'Shared report link not found');
       }
       if (existingLink.userId !== auth.user.id) {
-        throw new ApiError(403, 'forbidden', 'Only the link owner can update recipient AI review access');
+        throw new ApiError(403, 'forbidden', 'Only the link owner can update recipient extra AI review access');
       }
 
       const body = await readJsonBody(req);

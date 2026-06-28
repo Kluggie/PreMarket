@@ -160,13 +160,16 @@ export default function Step3ReviewPackage({
   saveDraftPending = false,
   onBack,
   onRunEvaluation,
+  actionSlot = null,
   runActionLabel = '',
   runActionTestId = 'step2-run-evaluation-button',
   runActionDisabled = false,
+  showRunAction = true,
   runActionDisabledMessage = '',
   actionButtonClassName = 'bg-blue-600 hover:bg-blue-700',
   footerNote = null,
   evaluationFailureMessage = '',
+  backLabel = 'Back to Editor',
 }) {
   const counts = getDocumentCounts(documents);
   const confidentialDocs = documents.filter((d) => d.visibility === VISIBILITY_CONFIDENTIAL);
@@ -458,7 +461,7 @@ export default function Step3ReviewPackage({
       {footerNote}
 
       {/* Navigation */}
-      <div className="flex items-center justify-between pt-2">
+      <div className="flex items-center justify-between gap-3 pt-2">
         <Button
           variant="outline"
           onClick={onBack}
@@ -466,27 +469,33 @@ export default function Step3ReviewPackage({
           data-testid="step3-back-button"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Editor
+          {backLabel}
         </Button>
-        <Button
-          type="button"
-          onClick={onRunEvaluation}
-          disabled={isRunning || exceedsAnySizeLimit || !hasContent || runActionDisabled}
-          className={actionButtonClassName}
-          data-testid={runActionTestId}
-        >
-          {isRunning ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              {resolvedRunActionLabel}
-            </>
+        {actionSlot || (
+          showRunAction ? (
+            <Button
+              type="button"
+              onClick={onRunEvaluation}
+              disabled={isRunning || exceedsAnySizeLimit || !hasContent || runActionDisabled}
+              className={actionButtonClassName}
+              data-testid={runActionTestId}
+            >
+              {isRunning ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {resolvedRunActionLabel}
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  {resolvedRunActionLabel}
+                </>
+              )}
+            </Button>
           ) : (
-            <>
-              <Sparkles className="w-4 h-4 mr-2" />
-              {resolvedRunActionLabel}
-            </>
-          )}
-        </Button>
+            <div />
+          )
+        )}
       </div>
     </div>
   );

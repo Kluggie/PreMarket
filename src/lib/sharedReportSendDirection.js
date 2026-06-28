@@ -1,5 +1,8 @@
 const PROPOSER_ROLE = 'proposer';
 const RECIPIENT_ROLE = 'recipient';
+export const RUN_EXTRA_AI_REVIEW_LABEL = 'Run Extra AI Review';
+export const RERUN_EXTRA_AI_REVIEW_LABEL = 'Re-run Extra AI Review';
+export const RUNNING_EXTRA_AI_REVIEW_LABEL = 'Running Extra AI Review...';
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -57,10 +60,17 @@ export function buildSharedReportTurnCopy(draftAuthorRole, { counterpartyName } 
     sendCtaLabel: `Send to ${counterpartyDisplay}`,
     sentCtaLabel: `Sent to ${counterpartyDisplay}`,
     signInToSendLabel: `Please sign in to send updates to ${counterpartyDisplay}.`,
-    step3Description: 'Run and review your AI mediation review.',
-    noReportMessage: 'No mediation review is available yet. Run AI Mediation to generate one.',
+    step3Description: 'Review your response package, then optionally run an extra AI review before sending.',
+    noReportMessage: 'No extra AI review has been generated yet. You can still edit and send your response.',
     proposalDetailsDescription: 'Read-only current opportunity state after your edits.',
   };
+}
+
+export function getRecipientExtraAiReviewActionLabel({ isPending = false, hasExisting = false } = {}) {
+  if (isPending) {
+    return RUNNING_EXTRA_AI_REVIEW_LABEL;
+  }
+  return hasExisting ? RERUN_EXTRA_AI_REVIEW_LABEL : RUN_EXTRA_AI_REVIEW_LABEL;
 }
 
 export function getSharedReportSendActionLabel(draftAuthorRole, { isSent = false, isPending = false, counterpartyName } = {}) {

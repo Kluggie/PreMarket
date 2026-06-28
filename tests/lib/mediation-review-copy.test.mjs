@@ -35,12 +35,13 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
   assert.match(files.comparisonTabs, /Open Questions/);
   assert.match(files.proposalDetail, /Download \$\{reviewLabel\} JSON/);
   assert.match(files.comparisonDetail, /No \$\{reviewLabel\} yet/);
-  assert.match(files.comparisonDetail, /Allow recipient AI reviews/);
-  assert.match(files.comparisonDetail, /monthly review limit/);
+  assert.match(files.comparisonDetail, /Allow Recipient to Run Extra AI Review/);
+  assert.match(files.comparisonDetail, /counts against your monthly AI review limit/i);
+  assert.match(files.comparisonDetail, /responding and sending back remain available either way/i);
   assert.match(files.sharedReport, /baselineReviewLabelForDownloads/);
   assert.match(files.sharedReport, /label: `\$\{baselineReviewLabelForDownloads\} PDF`/);
   assert.match(files.sharedReport, /Step 3: \$\{MEDIATION_REVIEW_LABEL\}/);
-  assert.match(files.sharedReport, /The proposal owner has not enabled recipient AI reviews for this link/);
+  assert.match(files.sharedReport, /The owner has not enabled extra AI review for this link/);
   assert.match(files.comparisonPdfRoute, /MEDIATION_REVIEW_TITLE/);
   assert.match(files.comparisonPdfRoute, /PRE_SEND_REVIEW_TITLE/);
   assert.match(files.comparisonPdfRoute, /Submission Summary/);
