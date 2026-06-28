@@ -158,6 +158,28 @@ test('api route aliases for csrf and me resolve correctly', async () => {
   assert.equal([401, 503].includes(meRes.statusCode), true);
 });
 
+test('api/auth/csrf bootstrap route resolves through api/index and sets the CSRF cookie', async () => {
+  const csrfReq = createMockReq({
+    method: 'GET',
+    url: '/api/index?path=auth%2Fcsrf',
+    query: {
+      path: 'auth/csrf',
+    },
+  });
+  const csrfRes = createMockRes();
+
+  await apiHandler(csrfReq, csrfRes);
+
+  assert.equal(csrfRes.statusCode, 200);
+  const body = csrfRes.jsonBody();
+  assert.equal(typeof body.csrfToken, 'string');
+  assert.ok(body.csrfToken.length > 20);
+
+  const setCookie = csrfRes.getHeader('set-cookie');
+  const serializedCookies = Array.isArray(setCookie) ? setCookie.join('\n') : String(setCookie || '');
+  assert.match(serializedCookies, /pm_csrf=/);
+});
+
 test('debug db endpoint is protected and returns safe identity fields', async () => {
   const nonProdReq = createMockReq({
     method: 'GET',

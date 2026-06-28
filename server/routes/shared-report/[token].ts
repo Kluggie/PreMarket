@@ -14,7 +14,7 @@ import {
   loadSharedReportHistory,
   resolveSharedReportLinkRound,
 } from '../../_lib/shared-report-history.js';
-import { evaluateMeaningfulPayloadContribution } from '../../_lib/meaningful-recipient-contribution.ts';
+import { evaluateMeaningfulPayloadContribution } from '../../_lib/meaningful-recipient-contribution.js';
 import {
   buildMediationRoundContext,
   enrichMediationRoundContext,

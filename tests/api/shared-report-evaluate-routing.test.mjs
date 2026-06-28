@@ -64,9 +64,32 @@ test('PATCH /api/sharedReports/:token dispatches to the owner toggle route inste
   });
   const body = res.jsonBody();
 
-  assert.notEqual(res.statusCode, 404);
-  assert.notEqual(body.error?.code, 'not_found');
-  assert.notEqual(body.error?.message, 'Route not found');
+  assert.equal(res.statusCode, 401);
+  assert.equal(body.error?.code, 'unauthorized');
+});
+
+test('unknown API routes still return not_found', async () => {
+  const res = await invokeApiIndex({
+    method: 'GET',
+    path: 'definitely-not-a-real-route',
+  });
+  const body = res.jsonBody();
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(body.error?.code, 'not_found');
+  assert.equal(body.error?.message, 'Route not found');
+});
+
+test('unsupported methods for /api/sharedReports/:token still fall through to not_found', async () => {
+  const res = await invokeApiIndex({
+    method: 'DELETE',
+    path: 'sharedReports/test-token',
+  });
+  const body = res.jsonBody();
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(body.error?.code, 'not_found');
+  assert.equal(body.error?.message, 'Route not found');
 });
 
 if (!hasDatabaseUrl()) {
