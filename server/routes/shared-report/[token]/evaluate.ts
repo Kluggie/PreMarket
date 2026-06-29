@@ -22,6 +22,7 @@ import {
   type MediationRoundContext,
 } from '../../../_lib/mediation-progress.js';
 import {
+  buildReviewContextHistoryState,
   buildDraftContributionEntries,
   buildSharedHistoryComposite,
   formatContributionsForAi,
@@ -553,12 +554,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     ];
     const sharedText = formatContributionsForAi(sharedHistoryEntriesForAi);
     const confidentialBundle = formatContributionsForAi(confidentialHistoryEntriesForAi);
-    const priorRoundText = formatContributionsForAi(
-      sharedHistory.contributions.filter((entry) => {
-        const roundNumber = Number(entry?.roundNumber || 0);
-        return Number.isFinite(roundNumber) && roundNumber >= 1 && roundNumber < outgoingRoundNumber;
-      }),
-    );
     const visibleSharedBundle = buildSharedHistoryComposite([
       ...sharedHistory.sharedEntries,
       ...draftSharedEntries.map((entry) => ({
@@ -587,6 +582,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         asText(sharedSnapshotByRound.get(Number(entry.round || 0))) || entry.sharedTextSnapshot,
     }));
     const priorBilateralRounds = normalizedExchangeHistory.filter((entry) => entry.report);
+    const reviewContextHistory = buildReviewContextHistoryState({
+      contributions: sharedHistory.contributions,
+      outgoingRoundNumber,
+      previousReviewsConsidered: priorBilateralRounds.length,
+    });
     const latestPriorBilateralRound = priorBilateralRounds[priorBilateralRounds.length - 1] || null;
     const baseMediationRoundContext = buildMediationRoundContext({
       bilateralRoundNumber: priorBilateralRounds.length + 1,
@@ -1047,24 +1047,21 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       if (Boolean(v2Preflight.trimTriggered)) {
         omittedDueToCapacity.push('prompt tightened during token preflight');
       }
-      const priorRoundNumbers = new Set(
-        sharedHistory.contributions
-          .map((entry) => Number(entry?.roundNumber || 0))
-          .filter((roundNumber) => Number.isFinite(roundNumber) && roundNumber >= 1 && roundNumber < outgoingRoundNumber),
-      );
       const reviewContextEstimate = buildMediationContextEstimate({
         visibleSharedText: visibleSharedBundle.text || '',
         visibleConfidentialText: currentRoundRecipientConfidentialText,
         directSharedText: evaluationSharedText,
         directConfidentialText: evaluationConfidentialText,
-        priorRoundText,
+        priorRoundText: formatContributionsForAi(reviewContextHistory.priorRoundEntries),
         summaryMemoryText: [
           convergenceDigest?.digestText || '',
           priorBilateralRounds.length > 0 && mediationRoundContext ? JSON.stringify(mediationRoundContext) : '',
         ].filter(Boolean).join('\n'),
         retrievedChunkCount: Number(evaluationDiagnostics.evidenceCount || 0),
         retrievedContextTokens: Number(evaluationDiagnostics.evidenceBudgetUsed || 0),
-        includedPriorRounds: priorRoundNumbers.size,
+        initialProposalContextIncluded: reviewContextHistory.initialProposalContextIncluded,
+        priorRoundsConsidered: reviewContextHistory.priorRoundsConsidered,
+        previousReviewsConsidered: reviewContextHistory.previousReviewsConsidered,
         omittedDueToCapacity,
         estimatorMode: 'evaluate_runtime',
       });

@@ -7,6 +7,7 @@ import { ApiError } from '../../_lib/errors.js';
 import { buildSharedReportScopedActivityHistory } from '../../_lib/proposal-activity.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
+  buildReviewContextHistoryState,
   buildDraftContributionEntries,
   buildSharedHistoryComposite,
   formatContributionsForAi,
@@ -529,12 +530,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     ];
     const sharedText = formatContributionsForAi(sharedHistoryEntriesForAi);
     const confidentialText = formatContributionsForAi(confidentialHistoryEntriesForAi);
-    const priorRoundText = formatContributionsForAi(
-      sharedHistory.contributions.filter((entry: any) => {
-        const roundNumber = Number(entry?.roundNumber || 0);
-        return Number.isFinite(roundNumber) && roundNumber >= 1 && roundNumber < outgoingRoundNumber;
-      }),
-    );
     const visibleSharedBundle = buildSharedHistoryComposite([
       ...sharedHistory.sharedEntries,
       ...draftSharedEntries.map((entry: any) => ({
@@ -560,6 +555,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         asText(sharedSnapshotByRound.get(Number(entry.round || 0))) || entry.sharedTextSnapshot,
     }));
     const priorBilateralRounds = normalizedExchangeHistory.filter((entry: any) => entry.report);
+    const reviewContextHistory = buildReviewContextHistoryState({
+      contributions: sharedHistory.contributions,
+      outgoingRoundNumber,
+      previousReviewsConsidered: priorBilateralRounds.length,
+    });
     const latestPriorBilateralRound = priorBilateralRounds[priorBilateralRounds.length - 1] || null;
     const baseMediationRoundContext = buildMediationRoundContext({
       bilateralRoundNumber: priorBilateralRounds.length + 1,
@@ -585,10 +585,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     });
     const retrievalCandidates = [
       ...buildEvidenceCandidatesFromContributions(
-        sharedHistory.contributions.filter((entry: any) => {
-          const roundNumber = Number(entry?.roundNumber || 0);
-          return Number.isFinite(roundNumber) && roundNumber >= 1 && roundNumber < outgoingRoundNumber;
-        }),
+        reviewContextHistory.priorRoundEntries,
       ),
       ...priorBilateralRounds
         .map((round: any) =>
@@ -602,11 +599,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         .filter(Boolean),
     ];
     const retrievedEstimate = estimateRetrievedContextFromCandidates(retrievalCandidates);
-    const priorRoundNumbers = new Set(
-      sharedHistory.contributions
-        .map((entry: any) => Number(entry?.roundNumber || 0))
-        .filter((roundNumber: number) => Number.isFinite(roundNumber) && roundNumber >= 1 && roundNumber < outgoingRoundNumber),
-    );
     const omittedDueToCapacity = [];
     if (budgeted.budget.trimmedFromShared > 0) {
       omittedDueToCapacity.push(`${budgeted.budget.trimmedFromShared.toLocaleString()} shared chars trimmed`);
@@ -622,14 +614,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       visibleConfidentialText: currentRoundConfidentialText,
       directSharedText: budgeted.sharedText,
       directConfidentialText: budgeted.confidentialText,
-      priorRoundText,
+      priorRoundText: formatContributionsForAi(reviewContextHistory.priorRoundEntries),
       summaryMemoryText: [
         convergenceDigest?.digestText || '',
         priorBilateralRounds.length > 0 && mediationRoundContext ? JSON.stringify(mediationRoundContext) : '',
       ].filter(Boolean).join('\n'),
       retrievedChunkCount: retrievedEstimate.retrievedChunkCount,
       retrievedContextTokens: retrievedEstimate.retrievedContextTokens,
-      includedPriorRounds: priorRoundNumbers.size,
+      initialProposalContextIncluded: reviewContextHistory.initialProposalContextIncluded,
+      priorRoundsConsidered: reviewContextHistory.priorRoundsConsidered,
+      previousReviewsConsidered: reviewContextHistory.previousReviewsConsidered,
       omittedDueToCapacity,
       estimatorMode: 'workspace_preflight',
     });

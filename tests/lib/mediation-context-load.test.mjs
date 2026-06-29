@@ -6,6 +6,7 @@ import {
   buildBundleOnlyContextEstimate,
   buildMediationContextEstimate,
   MEDIATION_CONTEXT_CHARS_PER_TOKEN,
+  MEDIATION_PROMPT_OVERHEAD_BASE_TOKENS,
   MEDIATION_REVIEW_EFFECTIVE_INPUT_BUDGET_TOKENS,
 } from '../../src/lib/mediationContextLoad.js';
 import {
@@ -38,9 +39,30 @@ test('single short first-round proposal remains Very Light', () => {
   });
 
   assert.equal(estimate.capacityLabel, 'Very Light');
+  assert.equal(estimate.initialProposalContextIncluded, false);
+  assert.equal(estimate.priorRoundsConsidered, 0);
   assert.equal(estimate.includedPriorRounds, 0);
+  assert.equal(estimate.previousReviewsConsidered, 0);
   assert.equal(estimate.retrievedChunkCount, 0);
   assert.equal(estimate.omittedDueToCapacityCount, 0);
+});
+
+test('baseline context is tracked separately from post-baseline prior rounds', () => {
+  const estimate = buildMediationContextEstimate({
+    visibleSharedText: 'Initial proposer package with scope and milestones.',
+    visibleConfidentialText: 'Recipient private note for the current turn.',
+    directSharedText: 'Initial proposer package with scope and milestones.',
+    directConfidentialText: 'Recipient private note for the current turn.',
+    initialProposalContextIncluded: true,
+    priorRoundsConsidered: 0,
+    previousReviewsConsidered: 0,
+  });
+
+  assert.equal(estimate.initialProposalContextIncluded, true);
+  assert.equal(estimate.priorRoundsConsidered, 0);
+  assert.equal(estimate.includedPriorRounds, 0);
+  assert.equal(estimate.previousReviewsConsidered, 0);
+  assert.equal(estimate.promptOverheadTokens, MEDIATION_PROMPT_OVERHEAD_BASE_TOKENS);
 });
 
 test('later-round load does not rely only on the visible current bundle size', () => {
@@ -58,7 +80,9 @@ test('later-round load does not rely only on the visible current bundle size', (
     retrievedContextTokens: 720,
     summaryMemoryTokens: 360,
     promptOverheadTokens: 900,
-    includedPriorRounds: 4,
+    initialProposalContextIncluded: true,
+    priorRoundsConsidered: 4,
+    previousReviewsConsidered: 3,
     estimatorMode: 'test_later_round',
   });
 
@@ -66,7 +90,10 @@ test('later-round load does not rely only on the visible current bundle size', (
   assert.notEqual(laterRound.capacityLabel, 'Very Light');
   assert.equal(laterRound.capacityLabel, 'Light');
   assert.equal(laterRound.currentBundleEstimatedTokens < laterRound.totalEstimatedInputTokens, true);
+  assert.equal(laterRound.initialProposalContextIncluded, true);
+  assert.equal(laterRound.priorRoundsConsidered, 4);
   assert.equal(laterRound.includedPriorRounds, 4);
+  assert.equal(laterRound.previousReviewsConsidered, 3);
 });
 
 test('prior-round summaries increase estimated context load', () => {
@@ -82,7 +109,8 @@ test('prior-round summaries increase estimated context load', () => {
     directSharedText: 'Current shared update.',
     directConfidentialText: 'Current private note.',
     summaryMemoryText: 'Prior round summary: attribution remains open; approval rights narrowed.',
-    includedPriorRounds: 2,
+    priorRoundsConsidered: 2,
+    previousReviewsConsidered: 1,
   });
 
   assert.equal(withSummary.summaryMemoryTokens > withoutSummary.summaryMemoryTokens, true);
@@ -126,19 +154,28 @@ test('omissions are surfaced explicitly when capacity trimming is expected', () 
   assert.match(estimate.omittedDueToCapacity.join(' | '), /confidential chars trimmed/);
 });
 
-test('Step 3 UI distinguishes current bundle size from AI context load and exposes no-prior-context states', () => {
+test('Step 3 UI distinguishes baseline proposal context from post-baseline history', () => {
   assert.match(step3PackageSource, /Current bundle size/);
+  assert.match(step3PackageSource, /Initial proposal context/);
   assert.match(step3PackageSource, /AI context load/);
   assert.match(step3PackageSource, /Prior rounds considered/);
+  assert.match(step3PackageSource, /Previous AI reviews/);
   assert.match(step3PackageSource, /Retrieved context chunks/);
-  assert.match(step3PackageSource, /No prior-round bundle text is currently included/);
-  assert.match(step3PackageSource, /No retrieved negotiation history is currently estimated/);
+  assert.match(step3PackageSource, /No post-baseline round history is currently included/);
+  assert.match(step3PackageSource, /No previous AI mediation reviews are currently included/);
+  assert.match(step3PackageSource, /No retrieved supporting context is currently estimated/);
   assert.match(step3PackageSource, /Omitted due to capacity/);
 });
 
 test('shared-report workspace and evaluate routes expose equivalent context accounting fields', () => {
   assert.match(sharedReportWorkspaceSource, /review_context_estimate/);
   assert.match(sharedReportWorkspaceSource, /workspace_review_context_estimate/);
+  assert.match(sharedReportWorkspaceSource, /initialProposalContextIncluded/);
+  assert.match(sharedReportWorkspaceSource, /priorRoundsConsidered/);
+  assert.match(sharedReportWorkspaceSource, /previousReviewsConsidered/);
   assert.match(sharedReportEvaluateSource, /context_estimate/);
   assert.match(sharedReportEvaluateSource, /review_context_estimate/);
+  assert.match(sharedReportEvaluateSource, /initialProposalContextIncluded/);
+  assert.match(sharedReportEvaluateSource, /priorRoundsConsidered/);
+  assert.match(sharedReportEvaluateSource, /previousReviewsConsidered/);
 });

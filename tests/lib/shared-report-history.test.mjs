@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildReviewContextHistoryState,
   buildDraftContributionEntries,
   buildSharedHistoryComposite,
   formatContributionsForAi,
@@ -79,4 +80,69 @@ test('buildSharedHistoryComposite renders ordered bilateral shared history witho
   assert.equal(composite.text.includes('Second recipient contribution.'), true);
   assert.equal(composite.html.includes('Shared by Proposer'), true);
   assert.equal(composite.html.includes('Shared by Recipient'), true);
+});
+
+test('buildReviewContextHistoryState excludes the baseline proposal from prior-round counts', () => {
+  const firstRound = buildReviewContextHistoryState({
+    contributions: [
+      {
+        authorRole: HISTORY_AUTHOR_PROPOSER,
+        visibility: 'shared',
+        roundNumber: 1,
+        contentPayload: { text: 'Baseline proposer package.' },
+      },
+      {
+        authorRole: HISTORY_AUTHOR_PROPOSER,
+        visibility: 'confidential',
+        roundNumber: 1,
+        contentPayload: { text: 'Baseline proposer confidential note.' },
+      },
+    ],
+    outgoingRoundNumber: 2,
+    previousReviewsConsidered: 0,
+  });
+
+  assert.equal(firstRound.initialProposalContextIncluded, true);
+  assert.equal(firstRound.priorRoundsConsidered, 0);
+  assert.equal(firstRound.previousReviewsConsidered, 0);
+  assert.equal(firstRound.priorRoundEntries.length, 0);
+
+  const laterRound = buildReviewContextHistoryState({
+    contributions: [
+      {
+        authorRole: HISTORY_AUTHOR_PROPOSER,
+        visibility: 'shared',
+        roundNumber: 1,
+        contentPayload: { text: 'Baseline proposer package.' },
+      },
+      {
+        authorRole: HISTORY_AUTHOR_RECIPIENT,
+        visibility: 'shared',
+        roundNumber: 2,
+        contentPayload: { text: 'Recipient reply.' },
+      },
+      {
+        authorRole: HISTORY_AUTHOR_RECIPIENT,
+        visibility: 'confidential',
+        roundNumber: 2,
+        contentPayload: { text: 'Recipient private note.' },
+      },
+      {
+        authorRole: HISTORY_AUTHOR_PROPOSER,
+        visibility: 'shared',
+        roundNumber: 3,
+        contentPayload: { text: 'Proposer counter-response.' },
+      },
+    ],
+    outgoingRoundNumber: 4,
+    previousReviewsConsidered: 1,
+  });
+
+  assert.equal(laterRound.initialProposalContextIncluded, true);
+  assert.equal(laterRound.priorRoundsConsidered, 2);
+  assert.equal(laterRound.previousReviewsConsidered, 1);
+  assert.deepEqual(
+    laterRound.priorRoundEntries.map((entry) => entry.roundNumber),
+    [2, 2, 3],
+  );
 });

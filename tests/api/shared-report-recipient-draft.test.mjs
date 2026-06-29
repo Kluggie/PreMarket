@@ -3019,7 +3019,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('shared-report repeated bilateral v2 evaluations stay in AI Mediation Review while later rounds add progress metadata', async () => {
+  test('shared-report context-estimate e2e later-round flow separates baseline from prior rounds and persists workspace/runtime estimates', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -3039,6 +3039,16 @@ if (!hasDatabaseUrl()) {
       canReevaluate: true,
       canSendBack: true,
     });
+
+    const initialWorkspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+    assert.equal(initialWorkspaceRes.statusCode, 200);
+    const initialContextEstimate = initialWorkspaceRes.jsonBody()?.review_context_estimate || {};
+    assert.equal(typeof initialContextEstimate.totalEstimatedInputTokens, 'number');
+    assert.equal(initialContextEstimate.initialProposalContextIncluded, true);
+    assert.equal(initialContextEstimate.priorRoundsConsidered, 0);
+    assert.equal(initialContextEstimate.includedPriorRounds, 0);
+    assert.equal(initialContextEstimate.previousReviewsConsidered, 0);
+    assert.equal(Array.isArray(initialContextEstimate.omittedDueToCapacity), true);
 
     const firstSaveRes = await saveRecipientDraft(link.token, {
       shared_payload: {
@@ -3321,8 +3331,16 @@ if (!hasDatabaseUrl()) {
       assert.equal(typeof diagnostics.narrativeWordCount, 'number');
       const savedContextEstimate = evaluationRows.rows[0]?.result_json?.input_trace?.context_estimate || {};
       assert.equal(typeof savedContextEstimate.totalEstimatedInputTokens, 'number');
-      assert.equal(savedContextEstimate.includedPriorRounds >= 1, true);
+      assert.equal(savedContextEstimate.initialProposalContextIncluded, true);
+      assert.equal(savedContextEstimate.priorRoundsConsidered > 0, true);
+      assert.equal(savedContextEstimate.includedPriorRounds, savedContextEstimate.priorRoundsConsidered);
+      assert.equal(savedContextEstimate.previousReviewsConsidered >= 1, true);
       assert.equal(typeof savedContextEstimate.retrievedChunkCount, 'number');
+      assert.equal(Array.isArray(savedContextEstimate.omittedDueToCapacity), true);
+      assert.equal(
+        savedContextEstimate.omittedDueToCapacity.every((entry) => typeof entry === 'string' && entry.length > 0),
+        true,
+      );
       assert.notEqual(savedContextEstimate.capacityLabel, 'Very Light');
 
       const workspaceRes = await getRecipientWorkspace(recipientRoundTwoToken, recipientCookie);
@@ -3333,8 +3351,16 @@ if (!hasDatabaseUrl()) {
       );
       const workspaceContextEstimate = workspaceRes.jsonBody()?.review_context_estimate || {};
       assert.equal(typeof workspaceContextEstimate.totalEstimatedInputTokens, 'number');
-      assert.equal(workspaceContextEstimate.includedPriorRounds >= 1, true);
+      assert.equal(workspaceContextEstimate.initialProposalContextIncluded, true);
+      assert.equal(workspaceContextEstimate.priorRoundsConsidered > 0, true);
+      assert.equal(workspaceContextEstimate.includedPriorRounds, workspaceContextEstimate.priorRoundsConsidered);
+      assert.equal(workspaceContextEstimate.previousReviewsConsidered >= 1, true);
       assert.equal(typeof workspaceContextEstimate.retrievedChunkCount, 'number');
+      assert.equal(Array.isArray(workspaceContextEstimate.omittedDueToCapacity), true);
+      assert.equal(
+        workspaceContextEstimate.omittedDueToCapacity.every((entry) => typeof entry === 'string' && entry.length > 0),
+        true,
+      );
       assert.equal(
         workspaceContextEstimate.totalEstimatedInputTokens >
           workspaceContextEstimate.currentBundleEstimatedTokens,

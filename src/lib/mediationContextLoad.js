@@ -155,14 +155,25 @@ export function buildMediationContextEstimate(params = {}) {
     params.retrievedChunkCount !== undefined ? toSafeInteger(params.retrievedChunkCount) : 0;
   const retrievedContextTokens =
     params.retrievedContextTokens !== undefined ? toSafeInteger(params.retrievedContextTokens) : 0;
-  const includedPriorRounds =
-    params.includedPriorRounds !== undefined ? toSafeInteger(params.includedPriorRounds) : 0;
+  const initialProposalContextIncluded = Boolean(params.initialProposalContextIncluded);
+  const priorRoundsConsidered =
+    params.priorRoundsConsidered !== undefined
+      ? toSafeInteger(params.priorRoundsConsidered)
+      : params.includedPriorRounds !== undefined
+        ? toSafeInteger(params.includedPriorRounds)
+        : 0;
+  const previousReviewsConsidered =
+    params.previousReviewsConsidered !== undefined
+      ? toSafeInteger(params.previousReviewsConsidered)
+      : 0;
+  const hasPriorContextBeyondBaseline =
+    priorRoundsConsidered > 0 || previousReviewsConsidered > 0;
 
   const promptOverheadTokens =
     params.promptOverheadTokens !== undefined
       ? toSafeInteger(params.promptOverheadTokens)
       : MEDIATION_PROMPT_OVERHEAD_BASE_TOKENS +
-        (includedPriorRounds > 0 ? MEDIATION_PROMPT_OVERHEAD_PRIOR_ROUNDS_TOKENS : 0) +
+        (hasPriorContextBeyondBaseline ? MEDIATION_PROMPT_OVERHEAD_PRIOR_ROUNDS_TOKENS : 0) +
         (retrievedChunkCount > 0 ? MEDIATION_PROMPT_OVERHEAD_RETRIEVAL_TOKENS : 0) +
         (summaryMemoryTokens > 0 ? MEDIATION_PROMPT_OVERHEAD_SUMMARY_TOKENS : 0);
 
@@ -210,8 +221,12 @@ export function buildMediationContextEstimate(params = {}) {
     capacityBand,
     omittedDueToCapacity: omissions,
     omittedDueToCapacityCount: omissions.length,
-    includedPriorRounds,
+    initialProposalContextIncluded,
+    priorRoundsConsidered,
+    includedPriorRounds: priorRoundsConsidered,
+    previousReviewsConsidered,
     retrievedChunkCount,
+    retrievedContextChunks: retrievedChunkCount,
     estimatorMode: asText(params.estimatorMode) || 'heuristic',
   };
 }
@@ -226,7 +241,9 @@ export function buildBundleOnlyContextEstimate(params = {}) {
     summaryMemoryText: '',
     retrievedChunkCount: 0,
     retrievedContextTokens: 0,
-    includedPriorRounds: 0,
+    initialProposalContextIncluded: false,
+    priorRoundsConsidered: 0,
+    previousReviewsConsidered: 0,
     omittedDueToCapacity: [],
     estimatorMode: 'bundle_only',
   });

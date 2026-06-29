@@ -214,6 +214,11 @@ export default function Step3ReviewPackage({
   const usagePercent = Math.min(100, Math.max(4, usageRatio * 100));
   const showCapacityWarning = usageRatio >= 0.5;
   const showNearLimitWarning = usageRatio >= 0.75;
+  const hasStructuredHistoryBreakdown =
+    reviewContextEstimate !== null ||
+    Boolean(resolvedReviewContextEstimate.initialProposalContextIncluded) ||
+    Number(resolvedReviewContextEstimate.priorRoundsConsidered || 0) > 0 ||
+    Number(resolvedReviewContextEstimate.previousReviewsConsidered || 0) > 0;
 
   return (
     <div className="space-y-6" data-testid="doc-comparison-step-3">
@@ -224,7 +229,7 @@ export default function Step3ReviewPackage({
           <CardTitle>Final Review Before Mediation</CardTitle>
           <CardDescription>
             Review the visible Shared and Confidential bundles before running AI mediation.
-            AI context load below also estimates prior-round summaries and retrieved negotiation history when available.
+            AI context load below also estimates baseline proposal context, later-round history, prior review summaries, and retrieved supporting context when available.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -260,25 +265,51 @@ export default function Step3ReviewPackage({
           </div>
 
           <div className="mt-4 pt-4 border-t border-slate-100 space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3">
               <ContextStat
                 label="Current bundle size"
                 value={`${resolvedReviewContextEstimate.currentBundleWords.toLocaleString()} words`}
                 helper={formatTokenCount(resolvedReviewContextEstimate.currentBundleEstimatedTokens)}
               />
+              {hasStructuredHistoryBreakdown ? (
+                <ContextStat
+                  label="Initial proposal context"
+                  value={resolvedReviewContextEstimate.initialProposalContextIncluded ? 'Yes' : 'No'}
+                  helper={
+                    resolvedReviewContextEstimate.initialProposalContextIncluded
+                      ? 'The proposer baseline still contributes to this review context'
+                      : 'Only the current round bundle is currently included'
+                  }
+                />
+              ) : null}
               <ContextStat
                 label="Prior rounds considered"
                 value={
-                  resolvedReviewContextEstimate.includedPriorRounds > 0
-                    ? resolvedReviewContextEstimate.includedPriorRounds.toLocaleString()
-                    : 'None'
+                  resolvedReviewContextEstimate.priorRoundsConsidered > 0
+                    ? resolvedReviewContextEstimate.priorRoundsConsidered.toLocaleString()
+                    : '0'
                 }
                 helper={
                   resolvedReviewContextEstimate.priorRoundTokens > 0
-                    ? `${formatTokenCount(resolvedReviewContextEstimate.priorRoundTokens)} already sit inside the review bundle`
-                    : 'No prior-round bundle text is currently included'
+                    ? `${formatTokenCount(resolvedReviewContextEstimate.priorRoundTokens)} of post-baseline round history already sits inside the review bundle`
+                    : 'No post-baseline round history is currently included'
                 }
               />
+              {hasStructuredHistoryBreakdown ? (
+                <ContextStat
+                  label="Previous AI reviews"
+                  value={
+                    resolvedReviewContextEstimate.previousReviewsConsidered > 0
+                      ? resolvedReviewContextEstimate.previousReviewsConsidered.toLocaleString()
+                      : '0'
+                  }
+                  helper={
+                    resolvedReviewContextEstimate.previousReviewsConsidered > 0
+                      ? 'Completed bilateral AI reviews may be referenced for continuity'
+                      : 'No previous AI mediation reviews are currently included'
+                  }
+                />
+              ) : null}
               <ContextStat
                 label="Retrieved context chunks"
                 value={
@@ -289,7 +320,7 @@ export default function Step3ReviewPackage({
                 helper={
                   resolvedReviewContextEstimate.retrievedContextTokens > 0
                     ? formatTokenCount(resolvedReviewContextEstimate.retrievedContextTokens)
-                    : 'No retrieved negotiation history is currently estimated'
+                    : 'No retrieved supporting context is currently estimated'
                 }
               />
               <ContextStat
@@ -319,7 +350,7 @@ export default function Step3ReviewPackage({
                 </span>
                 <Info
                   className="w-3.5 h-3.5 text-slate-400 cursor-help"
-                  title="AI context load estimates the full review context, including visible bundles, prior-round summaries, and retrieved negotiation history."
+                  title="AI context load estimates the full review context, including the initial proposal, later-round history, prior review summaries, and retrieved supporting context."
                 />
               </div>
             </div>
@@ -347,7 +378,7 @@ export default function Step3ReviewPackage({
               </div>
             </div>
             <p className="text-xs text-slate-500">
-              AI context load estimates the full review context, including current bundles, prior-round summaries, and retrieved negotiation history.
+              AI context load estimates the full review context, including current bundles, the initial proposal, later-round history, prior review summaries, and retrieved supporting context.
             </p>
             {showCapacityWarning && (
               <>
@@ -370,6 +401,9 @@ export default function Step3ReviewPackage({
                   Context diagnostics
                 </summary>
                 <div className="mt-2 space-y-1">
+                  <p>initialProposalContextIncluded: {resolvedReviewContextEstimate.initialProposalContextIncluded ? 'true' : 'false'}</p>
+                  <p>priorRoundsConsidered: {resolvedReviewContextEstimate.priorRoundsConsidered.toLocaleString()}</p>
+                  <p>previousReviewsConsidered: {resolvedReviewContextEstimate.previousReviewsConsidered.toLocaleString()}</p>
                   <p>directBundleTokens: {(resolvedReviewContextEstimate.directSharedTokens + resolvedReviewContextEstimate.directConfidentialTokens).toLocaleString()}</p>
                   <p>priorRoundTokens: {resolvedReviewContextEstimate.priorRoundTokens.toLocaleString()}</p>
                   <p>retrievedChunkTokens: {resolvedReviewContextEstimate.retrievedContextTokens.toLocaleString()}</p>

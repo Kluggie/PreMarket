@@ -199,6 +199,14 @@ function coerceContributionNumber(value) {
   return Math.floor(numeric);
 }
 
+function coerceNonNegativeNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return 0;
+  }
+  return Math.floor(numeric);
+}
+
 function buildSharedPayloadFromComparison(params) {
   const proposal = params?.proposal || null;
   const comparison = params?.comparison || null;
@@ -544,6 +552,43 @@ export function buildSharedHistoryComposite(entries) {
   return {
     text,
     html: html || '<p></p>',
+  };
+}
+
+export function buildReviewContextHistoryState(params = {}) {
+  const contributions = Array.isArray(params?.contributions) ? params.contributions : [];
+  const outgoingRoundNumber = coerceContributionNumber(params?.outgoingRoundNumber);
+  const previousReviewsConsidered = coerceNonNegativeNumber(params?.previousReviewsConsidered);
+
+  const preCurrentEntries = contributions.filter((entry) => {
+    const roundNumber = coerceContributionNumber(entry?.roundNumber);
+    if (roundNumber === null) {
+      return false;
+    }
+    if (outgoingRoundNumber !== null && roundNumber >= outgoingRoundNumber) {
+      return false;
+    }
+    return true;
+  });
+
+  const initialProposalEntries = preCurrentEntries.filter(
+    (entry) => coerceContributionNumber(entry?.roundNumber) === 1,
+  );
+  const priorRoundEntries = preCurrentEntries.filter(
+    (entry) => (coerceContributionNumber(entry?.roundNumber) || 0) > 1,
+  );
+  const priorRoundNumbers = new Set(
+    priorRoundEntries
+      .map((entry) => coerceContributionNumber(entry?.roundNumber))
+      .filter(Boolean),
+  );
+
+  return {
+    initialProposalEntries,
+    priorRoundEntries,
+    initialProposalContextIncluded: initialProposalEntries.length > 0,
+    priorRoundsConsidered: priorRoundNumbers.size,
+    previousReviewsConsidered,
   };
 }
 
