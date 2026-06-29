@@ -22,6 +22,7 @@ import {
   type MediationRoundContext,
 } from '../../../_lib/mediation-progress.js';
 import {
+  buildReviewContextHistoryState,
   buildDraftContributionEntries,
   buildSharedHistoryComposite,
   formatContributionsForAi,
@@ -49,6 +50,7 @@ import {
   PROMPT_TOKEN_HARD_CEILING,
   type ExchangeRoundSnapshot,
 } from '../../../_lib/evaluation-context-budget.js';
+import { buildMediationContextEstimate } from '../../../../src/lib/mediationContextLoad.js';
 import {
   DRAFT_STATUS,
   RECIPIENT_ROLE,
@@ -70,15 +72,16 @@ import {
   releaseAiMediationReviewReservation,
   reserveAiMediationReviewCredit,
 } from '../../../_lib/starter-entitlements.js';
+import { getRecipientAiReviewEnabled } from '../../../_lib/shared-link-review-permissions.js';
 import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewStage.js';
 
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
-const ADDITIONAL_REREVIEW_NOT_ALLOWED_MESSAGE =
-  'This link does not allow additional AI re-reviews. You can still edit and send your response.';
+const RECIPIENT_AI_REVIEW_NOT_ENABLED_MESSAGE =
+  'The owner has not enabled extra AI review for this link. You can still edit and send your response.';
 const RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE =
-  'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
+  'An extra AI review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
 
 function logEvaluationRuntime(
   context: any,
@@ -551,7 +554,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     ];
     const sharedText = formatContributionsForAi(sharedHistoryEntriesForAi);
     const confidentialBundle = formatContributionsForAi(confidentialHistoryEntriesForAi);
-    const sharedHtml = buildSharedHistoryComposite([
+    const visibleSharedBundle = buildSharedHistoryComposite([
       ...sharedHistory.sharedEntries,
       ...draftSharedEntries.map((entry) => ({
         id: entry.id,
@@ -562,7 +565,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         source: entry.contentPayload?.source || 'typed',
         files: entry.contentPayload?.files || [],
       })),
-    ]).html;
+    ]);
+    const sharedHtml = visibleSharedBundle.html;
 
     // ── Exchange history: include previous rounds' shared text ──────────────
     const exchangeHistory = await getExchangeHistory(resolved.db, {
@@ -578,6 +582,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         asText(sharedSnapshotByRound.get(Number(entry.round || 0))) || entry.sharedTextSnapshot,
     }));
     const priorBilateralRounds = normalizedExchangeHistory.filter((entry) => entry.report);
+    const reviewContextHistory = buildReviewContextHistoryState({
+      contributions: sharedHistory.contributions,
+      outgoingRoundNumber,
+      previousReviewsConsidered: priorBilateralRounds.length,
+    });
     const latestPriorBilateralRound = priorBilateralRounds[priorBilateralRounds.length - 1] || null;
     const baseMediationRoundContext = buildMediationRoundContext({
       bilateralRoundNumber: priorBilateralRounds.length + 1,
@@ -654,6 +663,19 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       sharedText,
       confidentialText: confidentialBundle,
     });
+    const recipientAiReviewEnabled = getRecipientAiReviewEnabled(resolved.link);
+
+    if (!recipientAiReviewEnabled) {
+      throw new ApiError(
+        403,
+        'recipient_ai_review_not_enabled',
+        RECIPIENT_AI_REVIEW_NOT_ENABLED_MESSAGE,
+        {
+          exchange_round: outgoingRoundNumber,
+          shared_link_id: resolved.link.id,
+        },
+      );
+    }
 
     // Cache hit = exact same inputs already have a saved successful AI result,
     // so there is no model call and no owner review-credit usage.
@@ -722,8 +744,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     // Cache miss = inputs changed or no saved result exists. Before any model
     // call or owner review-credit reservation, enforce the per-round policy:
-    // 1) first recipient review is allowed by default, and
-    // 2) only one additional non-cached re-review is allowed when enabled.
+    // 1) recipient full AI reviews must be owner-enabled for this link, and
+    // 2) each side gets at most one additional non-cached re-review per round.
     const [roundReviewCountRow] = await resolved.db
       .select({
         runCount: sql<number>`count(*)::int`,
@@ -757,20 +779,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       )
       .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
       .limit(1);
-
-    if (existingRoundRunCount > 0 && !resolved.link.canReevaluate) {
-      throw new ApiError(
-        403,
-        'reevaluation_not_allowed',
-        ADDITIONAL_REREVIEW_NOT_ALLOWED_MESSAGE,
-        {
-          evaluation_id: latestRoundReviewRun?.id || null,
-          revision_id: latestRoundReviewRun?.revisionId || null,
-          exchange_round: outgoingRoundNumber,
-          status: latestRoundReviewRun?.status || null,
-        },
-      );
-    }
 
     const additionalRoundReviewsUsed = Math.max(0, existingRoundRunCount - 1);
     if (additionalRoundReviewsUsed >= 1) {
@@ -1026,6 +1034,43 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       });
 
       const completedAt = new Date();
+      const omittedDueToCapacity = [];
+      if (budgeted.budget.trimmedFromShared > 0) {
+        omittedDueToCapacity.push(`${budgeted.budget.trimmedFromShared.toLocaleString()} shared chars trimmed`);
+      }
+      if (budgeted.budget.trimmedFromConfidential > 0) {
+        omittedDueToCapacity.push(`${budgeted.budget.trimmedFromConfidential.toLocaleString()} confidential chars trimmed`);
+      }
+      if (Number(evaluationDiagnostics.omittedEvidenceCount || 0) > 0) {
+        omittedDueToCapacity.push(`${Number(evaluationDiagnostics.omittedEvidenceCount || 0).toLocaleString()} retrieved chunks omitted`);
+      }
+      if (Boolean(v2Preflight.trimTriggered)) {
+        omittedDueToCapacity.push('prompt tightened during token preflight');
+      }
+      const reviewContextEstimate = buildMediationContextEstimate({
+        visibleSharedText: visibleSharedBundle.text || '',
+        visibleConfidentialText: currentRoundRecipientConfidentialText,
+        directSharedText: evaluationSharedText,
+        directConfidentialText: evaluationConfidentialText,
+        priorRoundText: formatContributionsForAi(reviewContextHistory.priorRoundEntries),
+        summaryMemoryText: [
+          convergenceDigest?.digestText || '',
+          priorBilateralRounds.length > 0 && mediationRoundContext ? JSON.stringify(mediationRoundContext) : '',
+        ].filter(Boolean).join('\n'),
+        retrievedChunkCount: Number(evaluationDiagnostics.evidenceCount || 0),
+        retrievedContextTokens: Number(evaluationDiagnostics.evidenceBudgetUsed || 0),
+        initialProposalContextIncluded: reviewContextHistory.initialProposalContextIncluded,
+        priorRoundsConsidered: reviewContextHistory.priorRoundsConsidered,
+        previousReviewsConsidered: reviewContextHistory.previousReviewsConsidered,
+        omittedDueToCapacity,
+        estimatorMode: 'evaluate_runtime',
+      });
+      if (process.env.NODE_ENV !== 'production') {
+        logEvaluationRuntime(context, 'review_context_estimate', {
+          evaluationId: evaluationRunId,
+          contextEstimate: reviewContextEstimate,
+        });
+      }
       const completedEvaluationDiagnostics = {
         ...evaluationDiagnostics,
         evaluatorElapsedMs: Date.now() - evaluatorStartedAt,
@@ -1072,6 +1117,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               convergence_digest_chars: convergenceDigest?.digestChars || 0,
               convergence_open_questions: convergenceDigest?.openQuestions?.length || 0,
               convergence_resolved_questions: convergenceDigest?.resolvedQuestions?.length || 0,
+              context_estimate: reviewContextEstimate,
             },
             review_idempotency_key: reviewIdempotencyKey,
             exchange_history: normalizedExchangeHistory.map((round) => ({

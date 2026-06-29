@@ -16,6 +16,11 @@ import {
 } from 'lucide-react';
 import { VISIBILITY_CONFIDENTIAL, VISIBILITY_SHARED, getDocumentCounts } from '@/pages/document-comparison/documentsModel';
 import { RUN_AI_MEDIATION_LABEL, RUNNING_AI_MEDIATION_LABEL } from '@/lib/aiReportUtils';
+import {
+  buildBundleOnlyContextEstimate,
+  buildMediationContextEstimate,
+  estimateTokensFromText,
+} from '@/lib/mediationContextLoad.js';
 
 // ─────────────────────────────────────────────
 //  Bundle section
@@ -23,36 +28,14 @@ import { RUN_AI_MEDIATION_LABEL, RUNNING_AI_MEDIATION_LABEL } from '@/lib/aiRepo
 
 const MAX_BUNDLE_PREVIEW_CHARS = 1200;
 
-// ─────────────────────────────────────────────
-//  AI capacity estimation
-// ─────────────────────────────────────────────
-
-// Quality heuristic for AI review capacity bands.
-// The mediation model (gemini-2.5-pro) has a very large context window, so these
-// bands do NOT reflect the model's hard input limit. They are app-level quality
-// bands: larger packages can reduce depth, nuance, and consistency of the review
-// even when they are well within the model's technical capacity.
-const AI_LIMIT_WORDS = 20_000;
-
-const CAPACITY_BANDS = [
-  { label: 'Very Light', labelColor: 'text-emerald-600', filledColor: 'bg-emerald-400' },
-  { label: 'Light',      labelColor: 'text-emerald-600', filledColor: 'bg-emerald-400' },
-  { label: 'Balanced',   labelColor: 'text-blue-600',    filledColor: 'bg-blue-400'    },
-  { label: 'Heavy',      labelColor: 'text-amber-600',   filledColor: 'bg-amber-500'   },
-  { label: 'Near Limit', labelColor: 'text-red-600',     filledColor: 'bg-red-500'     },
-];
-
-function countWords(text) {
-  return text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+function formatTokenCount(value) {
+  const numeric = Number(value || 0);
+  return `~${Math.max(0, Math.round(numeric)).toLocaleString()} tokens`;
 }
 
-function getCapacityIndex(totalWords) {
-  const pct = totalWords / AI_LIMIT_WORDS;
-  if (pct < 0.20) return 0; // Very Light
-  if (pct < 0.40) return 1; // Light
-  if (pct < 0.60) return 2; // Balanced
-  if (pct < 0.80) return 3; // Heavy
-  return 4;                  // Near Limit
+function formatPercent(value) {
+  const numeric = Number(value || 0);
+  return `${Math.max(0, Math.round(numeric * 100))}%`;
 }
 
 function BundleSection({ label, icon, colorClass, borderClass, bgClass, sourceDocs, bundleText }) {
@@ -79,7 +62,7 @@ function BundleSection({ label, icon, colorClass, borderClass, bgClass, sourceDo
         <CardDescription>
           {sourceDocs.length === 0
             ? 'No documents in this bundle.'
-            : 'These documents will be compiled into the bundle the AI evaluates.'}
+            : 'These documents will be compiled into the visible bundle preview for this review.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -157,6 +140,7 @@ function BundleSection({ label, icon, colorClass, borderClass, bgClass, sourceDo
  *   documents               SourceDocument[]
  *   confidentialBundle      { text, html, json, source, files }  (compiled)
  *   sharedBundle            { text, html, json, source, files }   (compiled)
+ *   reviewContextEstimate   optional later-round AI context estimate
  *   isFinishing             boolean
  *   finishStage             'idle' | 'saving' | 'evaluating'
  *   exceedsAnySizeLimit     boolean
@@ -169,17 +153,23 @@ export default function Step3ReviewPackage({
   documents = [],
   confidentialBundle = { text: '', html: '<p></p>', json: null, source: 'typed', files: [] },
   sharedBundle = { text: '', html: '<p></p>', json: null, source: 'typed', files: [] },
+  reviewContextEstimate = null,
   isFinishing = false,
   finishStage = 'idle',
   exceedsAnySizeLimit = false,
   saveDraftPending = false,
   onBack,
   onRunEvaluation,
+  actionSlot = null,
   runActionLabel = '',
   runActionTestId = 'step2-run-evaluation-button',
+  runActionDisabled = false,
+  showRunAction = true,
+  runActionDisabledMessage = '',
   actionButtonClassName = 'bg-blue-600 hover:bg-blue-700',
   footerNote = null,
   evaluationFailureMessage = '',
+  backLabel = 'Back to Editor',
 }) {
   const counts = getDocumentCounts(documents);
   const confidentialDocs = documents.filter((d) => d.visibility === VISIBILITY_CONFIDENTIAL);
@@ -187,6 +177,7 @@ export default function Step3ReviewPackage({
 
   const hasContent = Boolean(confidentialBundle.text || sharedBundle.text);
   const isRunning = isFinishing || saveDraftPending;
+  const diagnosticMode = Boolean(import.meta?.env?.DEV || import.meta?.env?.MODE === 'test');
 
   const finishLabel = finishStage === 'evaluating'
     ? RUNNING_AI_MEDIATION_LABEL
@@ -195,10 +186,39 @@ export default function Step3ReviewPackage({
       : RUN_AI_MEDIATION_LABEL;
   const resolvedRunActionLabel = isRunning ? finishLabel : runActionLabel || RUN_AI_MEDIATION_LABEL;
 
-  const totalWords = countWords(confidentialBundle.text) + countWords(sharedBundle.text);
-  const capacityIndex = getCapacityIndex(totalWords);
-  const capacityBand = CAPACITY_BANDS[capacityIndex];
-  const showCapacityWarning = capacityIndex >= 3;
+  const liveVisibleSharedTokens = estimateTokensFromText(sharedBundle.text || '');
+  const liveVisibleConfidentialTokens = estimateTokensFromText(confidentialBundle.text || '');
+  const resolvedReviewContextEstimate = reviewContextEstimate
+    ? buildMediationContextEstimate({
+      ...reviewContextEstimate,
+      visibleSharedText: sharedBundle.text || '',
+      visibleConfidentialText: confidentialBundle.text || '',
+      directSharedTokens: Math.max(
+        0,
+        Number(reviewContextEstimate.directSharedTokens || 0) +
+          (liveVisibleSharedTokens - Number(reviewContextEstimate.visibleSharedTokens || 0)),
+      ),
+      directConfidentialTokens: Math.max(
+        0,
+        Number(reviewContextEstimate.directConfidentialTokens || 0) +
+          (liveVisibleConfidentialTokens - Number(reviewContextEstimate.visibleConfidentialTokens || 0)),
+      ),
+      estimatorMode: reviewContextEstimate.estimatorMode || 'workspace_preflight_live',
+    })
+    : buildBundleOnlyContextEstimate({
+      sharedText: sharedBundle.text || '',
+      confidentialText: confidentialBundle.text || '',
+    });
+  const capacityBand = resolvedReviewContextEstimate.capacityBand;
+  const usageRatio = Number(resolvedReviewContextEstimate.usageRatio || 0);
+  const usagePercent = Math.min(100, Math.max(4, usageRatio * 100));
+  const showCapacityWarning = usageRatio >= 0.5;
+  const showNearLimitWarning = usageRatio >= 0.75;
+  const hasStructuredHistoryBreakdown =
+    reviewContextEstimate !== null ||
+    Boolean(resolvedReviewContextEstimate.initialProposalContextIncluded) ||
+    Number(resolvedReviewContextEstimate.priorRoundsConsidered || 0) > 0 ||
+    Number(resolvedReviewContextEstimate.previousReviewsConsidered || 0) > 0;
 
   return (
     <div className="space-y-6" data-testid="doc-comparison-step-3">
@@ -208,8 +228,8 @@ export default function Step3ReviewPackage({
         <CardHeader>
           <CardTitle>Final Review Before Mediation</CardTitle>
           <CardDescription>
-            Review the compiled Shared and Confidential bundles before running AI mediation.
-            This is exactly what the mediation review will use.
+            Review the visible Shared and Confidential bundles before running AI mediation.
+            AI context load below also estimates baseline proposal context, later-round history, prior review summaries, and retrieved supporting context when available.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -233,58 +253,170 @@ export default function Step3ReviewPackage({
               className="text-emerald-600"
             />
             <OverviewStat
-              label="Word size"
-              value={totalWords > 0 ? totalWords.toLocaleString() : '—'}
+              label="Current bundle size"
+              value={
+                resolvedReviewContextEstimate.currentBundleWords > 0
+                  ? `${resolvedReviewContextEstimate.currentBundleWords.toLocaleString()}w`
+                  : '—'
+              }
               Icon={Type}
               className="text-blue-600"
             />
           </div>
 
-          {/* AI capacity meter */}
-          <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
-            <div className="flex items-center justify-between">
+          <div className="mt-4 pt-4 border-t border-slate-100 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3">
+              <ContextStat
+                label="Current bundle size"
+                value={`${resolvedReviewContextEstimate.currentBundleWords.toLocaleString()} words`}
+                helper={formatTokenCount(resolvedReviewContextEstimate.currentBundleEstimatedTokens)}
+              />
+              {hasStructuredHistoryBreakdown ? (
+                <ContextStat
+                  label="Initial proposal context"
+                  value={resolvedReviewContextEstimate.initialProposalContextIncluded ? 'Yes' : 'No'}
+                  helper={
+                    resolvedReviewContextEstimate.initialProposalContextIncluded
+                      ? 'The proposer baseline still contributes to this review context'
+                      : 'Only the current round bundle is currently included'
+                  }
+                />
+              ) : null}
+              <ContextStat
+                label="Prior rounds considered"
+                value={
+                  resolvedReviewContextEstimate.priorRoundsConsidered > 0
+                    ? resolvedReviewContextEstimate.priorRoundsConsidered.toLocaleString()
+                    : '0'
+                }
+                helper={
+                  resolvedReviewContextEstimate.priorRoundTokens > 0
+                    ? `${formatTokenCount(resolvedReviewContextEstimate.priorRoundTokens)} of post-baseline round history already sits inside the review bundle`
+                    : 'No post-baseline round history is currently included'
+                }
+              />
+              {hasStructuredHistoryBreakdown ? (
+                <ContextStat
+                  label="Previous AI reviews"
+                  value={
+                    resolvedReviewContextEstimate.previousReviewsConsidered > 0
+                      ? resolvedReviewContextEstimate.previousReviewsConsidered.toLocaleString()
+                      : '0'
+                  }
+                  helper={
+                    resolvedReviewContextEstimate.previousReviewsConsidered > 0
+                      ? 'Completed bilateral AI reviews may be referenced for continuity'
+                      : 'No previous AI mediation reviews are currently included'
+                  }
+                />
+              ) : null}
+              <ContextStat
+                label="Retrieved context chunks"
+                value={
+                  resolvedReviewContextEstimate.retrievedChunkCount > 0
+                    ? resolvedReviewContextEstimate.retrievedChunkCount.toLocaleString()
+                    : 'None'
+                }
+                helper={
+                  resolvedReviewContextEstimate.retrievedContextTokens > 0
+                    ? formatTokenCount(resolvedReviewContextEstimate.retrievedContextTokens)
+                    : 'No retrieved supporting context is currently estimated'
+                }
+              />
+              <ContextStat
+                label="Estimated AI context load"
+                value={formatTokenCount(resolvedReviewContextEstimate.totalEstimatedInputTokens)}
+                helper={`${formatPercent(resolvedReviewContextEstimate.usageRatio)} of the evaluator budget`}
+              />
+              <ContextStat
+                label="Omitted due to capacity"
+                value={
+                  resolvedReviewContextEstimate.omittedDueToCapacityCount > 0
+                    ? resolvedReviewContextEstimate.omittedDueToCapacityCount.toLocaleString()
+                    : 'None'
+                }
+                helper={
+                  resolvedReviewContextEstimate.omittedDueToCapacityCount > 0
+                    ? resolvedReviewContextEstimate.omittedDueToCapacity.join('; ')
+                    : 'Nothing is currently estimated to be omitted'
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
               <div className="flex items-center gap-1.5">
                 <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
-                  AI review capacity
+                  AI context load
                 </span>
                 <Info
                   className="w-3.5 h-3.5 text-slate-400 cursor-help"
-                  title="An estimate of how much content the AI must process during mediation. Larger packages may reduce the depth of analysis."
+                  title="AI context load estimates the full review context, including the initial proposal, later-round history, prior review summaries, and retrieved supporting context."
                 />
               </div>
-              <span className={`text-xs font-bold ${capacityBand.labelColor}`}>
-                {capacityBand.label}
-              </span>
             </div>
             <div
-              className="flex gap-1"
+              className="space-y-2"
               role="meter"
-              aria-label={`AI review capacity: ${capacityBand.label}`}
-              aria-valuenow={capacityIndex + 1}
-              aria-valuemin={1}
-              aria-valuemax={5}
+              aria-label={`AI context load: ${capacityBand.label}`}
+              aria-valuenow={Math.round(Math.max(0, usageRatio) * 100)}
+              aria-valuemin={0}
+              aria-valuemax={100}
             >
-              {CAPACITY_BANDS.map((band, i) => (
+              <div className="flex items-center justify-between gap-3">
+                <span className={`text-xs font-bold ${capacityBand.labelColor}`}>
+                  {capacityBand.label}
+                </span>
+                <span className="text-xs text-slate-500">
+                  {formatTokenCount(resolvedReviewContextEstimate.totalEstimatedInputTokens)} / {formatTokenCount(resolvedReviewContextEstimate.effectiveContextBudgetTokens)}
+                </span>
+              </div>
+              <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
                 <div
-                  key={band.label}
-                  className={`h-1.5 flex-1 rounded-full transition-colors ${
-                    i <= capacityIndex ? band.filledColor : 'bg-slate-200'
-                  }`}
+                  className={`h-full rounded-full transition-all ${capacityBand.filledColor}`}
+                  style={{ width: `${usagePercent}%` }}
                 />
-              ))}
+              </div>
             </div>
             <p className="text-xs text-slate-500">
-              Higher context usage can reduce how much detail the AI can consider comfortably.
+              AI context load estimates the full review context, including current bundles, the initial proposal, later-round history, prior review summaries, and retrieved supporting context.
             </p>
             {showCapacityWarning && (
               <>
                 <p className="text-xs text-amber-700 font-medium">
-                  This package is becoming large for highest-quality review.
+                  The AI is now processing a heavier review context than the visible bundle alone suggests.
                 </p>
                 <p className="text-xs text-amber-600">
-                  Larger packages may reduce depth and consistency of review.
+                  Larger context loads can reduce depth and consistency even when the visible bundle still looks small.
                 </p>
               </>
+            )}
+            {showNearLimitWarning && (
+              <p className="text-xs text-red-700 font-medium">
+                Context usage is approaching the configured evaluator ceiling. Consider trimming history or splitting large updates before re-running mediation.
+              </p>
+            )}
+            {diagnosticMode && (
+              <details className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600" data-testid="ai-context-diagnostics">
+                <summary className="cursor-pointer font-semibold text-slate-700">
+                  Context diagnostics
+                </summary>
+                <div className="mt-2 space-y-1">
+                  <p>initialProposalContextIncluded: {resolvedReviewContextEstimate.initialProposalContextIncluded ? 'true' : 'false'}</p>
+                  <p>priorRoundsConsidered: {resolvedReviewContextEstimate.priorRoundsConsidered.toLocaleString()}</p>
+                  <p>previousReviewsConsidered: {resolvedReviewContextEstimate.previousReviewsConsidered.toLocaleString()}</p>
+                  <p>directBundleTokens: {(resolvedReviewContextEstimate.directSharedTokens + resolvedReviewContextEstimate.directConfidentialTokens).toLocaleString()}</p>
+                  <p>priorRoundTokens: {resolvedReviewContextEstimate.priorRoundTokens.toLocaleString()}</p>
+                  <p>retrievedChunkTokens: {resolvedReviewContextEstimate.retrievedContextTokens.toLocaleString()}</p>
+                  <p>historySummaryTokens: {resolvedReviewContextEstimate.summaryMemoryTokens.toLocaleString()}</p>
+                  <p>promptOverheadTokens: {resolvedReviewContextEstimate.promptOverheadTokens.toLocaleString()}</p>
+                  <p>totalEstimatedInputTokens: {resolvedReviewContextEstimate.totalEstimatedInputTokens.toLocaleString()}</p>
+                  <p>modelContextBudget: {resolvedReviewContextEstimate.effectiveContextBudgetTokens.toLocaleString()}</p>
+                  <p>outputReserveTokens: {resolvedReviewContextEstimate.outputReserveTokens.toLocaleString()}</p>
+                  <p>usageRatio: {resolvedReviewContextEstimate.usageRatio.toFixed(3)}</p>
+                  <p>capacityLabel: {resolvedReviewContextEstimate.capacityLabel}</p>
+                  <p>estimatorMode: {resolvedReviewContextEstimate.estimatorMode}</p>
+                </div>
+              </details>
             )}
           </div>
         </CardContent>
@@ -305,6 +437,15 @@ export default function Step3ReviewPackage({
           <AlertTriangle className="h-4 w-4 text-red-700" />
           <AlertDescription className="text-red-800">
             {evaluationFailureMessage}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {runActionDisabledMessage ? (
+        <Alert className="bg-amber-50 border-amber-200">
+          <AlertTriangle className="h-4 w-4 text-amber-700" />
+          <AlertDescription className="text-amber-900">
+            {runActionDisabledMessage}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -354,7 +495,7 @@ export default function Step3ReviewPackage({
       {footerNote}
 
       {/* Navigation */}
-      <div className="flex items-center justify-between pt-2">
+      <div className="flex items-center justify-between gap-3 pt-2">
         <Button
           variant="outline"
           onClick={onBack}
@@ -362,27 +503,33 @@ export default function Step3ReviewPackage({
           data-testid="step3-back-button"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Editor
+          {backLabel}
         </Button>
-        <Button
-          type="button"
-          onClick={onRunEvaluation}
-          disabled={isRunning || exceedsAnySizeLimit || !hasContent}
-          className={actionButtonClassName}
-          data-testid={runActionTestId}
-        >
-          {isRunning ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              {resolvedRunActionLabel}
-            </>
+        {actionSlot || (
+          showRunAction ? (
+            <Button
+              type="button"
+              onClick={onRunEvaluation}
+              disabled={isRunning || exceedsAnySizeLimit || !hasContent || runActionDisabled}
+              className={actionButtonClassName}
+              data-testid={runActionTestId}
+            >
+              {isRunning ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {resolvedRunActionLabel}
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  {resolvedRunActionLabel}
+                </>
+              )}
+            </Button>
           ) : (
-            <>
-              <Sparkles className="w-4 h-4 mr-2" />
-              {resolvedRunActionLabel}
-            </>
-          )}
-        </Button>
+            <div />
+          )
+        )}
       </div>
     </div>
   );
@@ -398,6 +545,16 @@ function OverviewStat({ label, value, Icon, className }) {
       <Icon className={`w-5 h-5 ${className}`} />
       <span className={`text-2xl font-bold ${className}`}>{value}</span>
       <span className="text-xs text-slate-500">{label}</span>
+    </div>
+  );
+}
+
+function ContextStat({ label, value, helper }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{helper}</p>
     </div>
   );
 }
