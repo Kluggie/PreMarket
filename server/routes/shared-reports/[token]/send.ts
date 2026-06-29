@@ -440,7 +440,7 @@ async function createDeliveryLog(params: {
   proposalId: string;
   userId: string;
   sentToEmail: string;
-  status: 'queued' | 'sent' | 'failed';
+  status: 'queued' | 'delivered' | 'bounced' | 'failed';
   providerMessageId?: string | null;
   lastError?: string | null;
 }) {
@@ -456,7 +456,7 @@ async function createDeliveryLog(params: {
       status: params.status,
       providerMessageId: params.providerMessageId || null,
       lastError: params.lastError || null,
-      sentAt: params.status === 'sent' ? now : null,
+      sentAt: params.status === 'failed' ? null : now,
       metadata: {},
       createdAt: now,
       updatedAt: now,
@@ -767,7 +767,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       proposalId: targetProposal.id,
       userId: auth.user.id,
       sentToEmail: recipientEmail,
-      status: 'sent',
+      status: 'queued',
       providerMessageId,
       lastError: null,
     });

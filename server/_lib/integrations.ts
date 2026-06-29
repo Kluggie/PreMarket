@@ -103,6 +103,10 @@ export function getStripeWebhookSecret() {
   return asTrimmedString(process.env.STRIPE_WEBHOOK_SECRET);
 }
 
+export function getResendWebhookSecret() {
+  return asTrimmedString(process.env.RESEND_WEBHOOK_SECRET);
+}
+
 export function getResendConfig() {
   const apiKey = asTrimmedString(process.env.RESEND_API_KEY);
   const fromEmail = asTrimmedString(process.env.RESEND_FROM_EMAIL);

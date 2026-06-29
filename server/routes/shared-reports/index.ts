@@ -24,6 +24,11 @@ function normalizeEmail(value: unknown) {
   return normalized || '';
 }
 
+function normalizeDeliveryStatus(value: unknown) {
+  const normalized = asText(value).toLowerCase();
+  return normalized === 'sent' ? 'queued' : normalized || 'queued';
+}
+
 function buildSharedReportUrl(token: string) {
   const appBaseUrl = asText(process.env.APP_BASE_URL);
   const returnPath = `/shared-report/${encodeURIComponent(String(token || ''))}`;
@@ -55,7 +60,7 @@ function mapDelivery(row: any) {
   if (!row) return null;
   return {
     id: row.id,
-    status: row.status,
+    status: normalizeDeliveryStatus(row.status),
     sent_to_email: row.sentToEmail,
     provider_message_id: row.providerMessageId || null,
     last_error: row.lastError || null,

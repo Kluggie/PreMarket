@@ -7,6 +7,7 @@ import healthVertexHandler from '../server/routes/health/vertex.js';
 import debugVertexHandler from '../server/routes/debug/vertex.js';
 import debugDbHandler from '../server/routes/debug/db.js';
 import stripeWebhookHandler from '../server/routes/stripeWebhook.js';
+import resendWebhookHandler from '../server/routes/resendWebhook.js';
 import authMeHandler from '../server/routes/auth/me.js';
 import authLogoutHandler from '../server/routes/auth/logout.js';
 import authCsrfHandler from '../server/routes/auth/csrf.js';
@@ -233,6 +234,10 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/stripeWebhook' && method === 'POST') {
     return stripeWebhookHandler(req, res);
+  }
+
+  if (pathname === '/api/resendWebhook' && method === 'POST') {
+    return resendWebhookHandler(req, res);
   }
 
   if (pathname === '/api/auth/me' && method === 'GET') {

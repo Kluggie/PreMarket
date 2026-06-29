@@ -82,6 +82,85 @@ function newRecipientRow() {
   return { id: `r_${Math.random().toString(36).slice(2)}`, name: '', email: '', emailError: '' };
 }
 
+function normalizeSharedReportDeliveryStatus(value) {
+  const status = asLower(value);
+  if (status === 'sent' || status === 'queued' || status === 'email.sent') {
+    return 'queued';
+  }
+  if (status === 'delivered' || status === 'email.delivered') {
+    return 'delivered';
+  }
+  if (status === 'bounced' || status === 'bounce' || status === 'email.bounced') {
+    return 'bounced';
+  }
+  if (status === 'failed' || status === 'email.failed') {
+    return 'failed';
+  }
+  return status || 'queued';
+}
+
+function getSharedReportDeliveryRecipientLabel(entry) {
+  return asText(entry?.name) || asText(entry?.email || entry?.sent_to_email) || 'Unknown recipient';
+}
+
+function getSharedReportDeliverySecondaryEmail(entry) {
+  const name = asText(entry?.name);
+  const email = asText(entry?.email || entry?.sent_to_email);
+  if (!name || !email) {
+    return '';
+  }
+  return email;
+}
+
+function getSharedReportDeliveryUi(entry) {
+  const status = normalizeSharedReportDeliveryStatus(entry?.status);
+  const recipientLabel = getSharedReportDeliveryRecipientLabel(entry);
+  const errorDetail = asText(entry?.error || entry?.last_error);
+
+  switch (status) {
+    case 'delivered':
+      return {
+        status,
+        indicatorClass: 'bg-emerald-500',
+        badgeClass: 'bg-emerald-100 text-emerald-700',
+        title: `Delivered · ${recipientLabel}`,
+        badgeLabel: 'Last delivery: Delivered',
+        subtitle: 'Email delivered by email provider.',
+        detail: '',
+      };
+    case 'bounced':
+      return {
+        status,
+        indicatorClass: 'bg-red-500',
+        badgeClass: 'bg-red-100 text-red-700',
+        title: `Bounced · ${recipientLabel}`,
+        badgeLabel: 'Last delivery: Bounced',
+        subtitle: 'Email could not be delivered. Check the address or copy the link manually.',
+        detail: errorDetail,
+      };
+    case 'failed':
+      return {
+        status,
+        indicatorClass: 'bg-red-500',
+        badgeClass: 'bg-red-100 text-red-700',
+        title: `Failed · ${recipientLabel}`,
+        badgeLabel: 'Last delivery: Failed',
+        subtitle: 'Email could not be sent. Check the address or copy the link manually.',
+        detail: errorDetail,
+      };
+    default:
+      return {
+        status: 'queued',
+        indicatorClass: 'bg-slate-400',
+        badgeClass: 'bg-slate-100 text-slate-700',
+        title: `Queued · ${recipientLabel}`,
+        badgeLabel: 'Last delivery: Queued',
+        subtitle: 'Email submitted for delivery.',
+        detail: '',
+      };
+  }
+}
+
 function getActiveRows(rows) {
   return rows.filter((r) => asText(r.email) !== '' || asText(r.name) !== '');
 }
@@ -851,8 +930,8 @@ export default function DocumentComparisonDetail() {
           results.push({
             name: recipient.name || '',
             email: recipient.email,
-            status: 'sent',
-            error: null,
+            status: result?.delivery?.status || 'queued',
+            error: asText(result?.delivery?.last_error) || null,
             token: result.token,
           });
         } catch (err) {
@@ -865,21 +944,21 @@ export default function DocumentComparisonDetail() {
           });
         }
       }
-      const lastSent = [...results].reverse().find((r) => r.status === 'sent') || null;
-      return { results, lastSent, count: results.length };
+      const lastSubmitted = [...results].reverse().find((r) => r.status !== 'failed') || null;
+      return { results, lastSubmitted, count: results.length };
     },
     onSuccess: async (payload) => {
-      if (payload?.lastSent?.token) {
-        setSelectedShareToken(payload.lastSent.token);
+      if (payload?.lastSubmitted?.token) {
+        setSelectedShareToken(payload.lastSubmitted.token);
       }
       setSendResults(payload.results);
       await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
-      const sent = payload.results.filter((r) => r.status === 'sent').length;
+      const sent = payload.results.filter((r) => r.status !== 'failed').length;
       const failed = payload.results.filter((r) => r.status === 'failed').length;
       if (sent > 0 && failed === 0) {
-        toast.success(sent > 1 ? `Accepted for sending to ${sent} recipients` : 'Email accepted by provider');
+        toast(sent > 1 ? `Email submitted for delivery to ${sent} recipients` : 'Email submitted for delivery');
       } else if (sent > 0 && failed > 0) {
-        toast.warning(`Accepted for ${sent} recipient${sent > 1 ? 's' : ''}; ${failed} failed`);
+        toast.warning(`Submitted for ${sent} recipient${sent > 1 ? 's' : ''}; ${failed} failed`);
       } else {
         toast.error('Failed to send to all recipients');
       }
@@ -1320,30 +1399,25 @@ export default function DocumentComparisonDetail() {
 
             {sendResults && sendResults.length > 0 ? (
               <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
-                {sendResults.map((r, i) => (
-                  <div key={i} className="flex items-start gap-3 px-3 py-2.5">
-                    <div
-                      className={`mt-1 flex-shrink-0 w-2 h-2 rounded-full ${
-                        r.status === 'sent' ? 'bg-green-500' : 'bg-red-500'
-                      }`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-800 leading-snug">
-                        {r.status === 'sent' ? 'Accepted' : 'Failed'}
-                        {r.name ? (
-                          <span className="font-normal text-slate-500"> · {r.name}</span>
+                {sendResults.map((r, i) => {
+                  const deliveryUi = getSharedReportDeliveryUi(r);
+                  const secondaryEmail = getSharedReportDeliverySecondaryEmail(r);
+                  return (
+                    <div key={i} className="flex items-start gap-3 px-3 py-2.5">
+                      <div className={`mt-1 flex-shrink-0 w-2 h-2 rounded-full ${deliveryUi.indicatorClass}`} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-800 leading-snug">{deliveryUi.title}</p>
+                        {secondaryEmail ? (
+                          <p className="text-xs text-slate-500 truncate">{secondaryEmail}</p>
                         ) : null}
-                      </p>
-                      <p className="text-xs text-slate-500 truncate">{r.email || '\u2014'}</p>
-                      {r.status === 'sent' ? (
-                        <p className="text-xs text-slate-400 mt-0.5">Accepted for delivery by email provider</p>
-                      ) : null}
-                      {r.status === 'failed' && r.error ? (
-                        <p className="text-xs text-red-600 mt-0.5">{r.error}</p>
-                      ) : null}
+                        <p className="text-xs text-slate-500 mt-0.5">{deliveryUi.subtitle}</p>
+                        {deliveryUi.detail ? (
+                          <p className="text-xs text-red-600 mt-0.5">{deliveryUi.detail}</p>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
 
@@ -1353,8 +1427,8 @@ export default function DocumentComparisonDetail() {
                   {activeSharedReport?.status || (isShareLinkPanelLoading ? 'initializing' : 'pending')}
                 </Badge>
                 {activeSharedReport?.last_delivery?.status ? (
-                  <Badge className="bg-blue-100 text-blue-700">
-                    Last delivery: {activeSharedReport.last_delivery.status}
+                  <Badge className={getSharedReportDeliveryUi(activeSharedReport.last_delivery).badgeClass}>
+                    {getSharedReportDeliveryUi(activeSharedReport.last_delivery).badgeLabel}
                   </Badge>
                 ) : null}
               </div>
@@ -1416,13 +1490,15 @@ export default function DocumentComparisonDetail() {
 
               {Array.isArray(activeSharedReport?.deliveries) && activeSharedReport.deliveries.length > 0 ? (
                 <div className="space-y-1 pt-2">
-                  {activeSharedReport.deliveries.map((delivery) => (
-                    <p key={delivery.id} className="text-xs text-slate-600">
-                      {delivery.status} • {delivery.sent_to_email || 'unknown'} •{' '}
-                      {formatDateTime(delivery.sent_at || delivery.created_at)}
-                      {delivery.last_error ? ` • ${delivery.last_error}` : ''}
-                    </p>
-                  ))}
+                  {activeSharedReport.deliveries.map((delivery) => {
+                    const deliveryUi = getSharedReportDeliveryUi(delivery);
+                    return (
+                      <p key={delivery.id} className="text-xs text-slate-600">
+                        {deliveryUi.title} • {formatDateTime(delivery.sent_at || delivery.created_at)}
+                        {deliveryUi.detail ? ` • ${deliveryUi.detail}` : ''}
+                      </p>
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-xs text-slate-500 pt-2">
