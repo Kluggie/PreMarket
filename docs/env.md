@@ -13,6 +13,7 @@ Set these in Vercel for **Development**, **Preview**, and **Production**:
 - `MFA_ENCRYPTION_KEY`
 - `RESEND_API_KEY`
 - `RESEND_FROM_EMAIL`
+- `RESEND_WEBHOOK_SECRET`
 - `EMAIL_MODE` (`contact_only` | `transactional` | `disabled`; default `contact_only`)
 - `SUPPORT_INBOX_EMAIL`
 - `SALES_INBOX_EMAIL`
@@ -41,6 +42,7 @@ Current route responsibilities:
 ```bash
 RESEND_API_KEY=re_...
 RESEND_FROM_EMAIL=reports@mail.getpremarket.com
+RESEND_WEBHOOK_SECRET=whsec_...
 RESEND_FROM_NAME=PreMarket
 RESEND_REPLY_TO=support@getpremarket.com
 EMAIL_MODE=contact_only
@@ -48,6 +50,11 @@ SUPPORT_INBOX_EMAIL=support@getpremarket.com
 SALES_INBOX_EMAIL=sales@getpremarket.com
 DEV_EMAIL_SINK=dev-sink@getpremarket.com
 ```
+
+## Resend Webhook
+
+- Store the Resend signing secret in `RESEND_WEBHOOK_SECRET`.
+- Production webhook target: `POST https://getpremarket.com/api/resendWebhook`
 
 ## Environment-Specific Values
 
