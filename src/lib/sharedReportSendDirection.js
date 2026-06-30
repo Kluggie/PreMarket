@@ -1,7 +1,8 @@
 const PROPOSER_ROLE = 'proposer';
 const RECIPIENT_ROLE = 'recipient';
+export const RUN_AI_MEDIATION_LABEL = 'Run AI Mediation';
+export const RUNNING_AI_MEDIATION_LABEL = 'Running AI Mediation...';
 export const RUN_EXTRA_AI_REVIEW_LABEL = 'Run Extra AI Review';
-export const RERUN_EXTRA_AI_REVIEW_LABEL = 'Re-run Extra AI Review';
 export const RUNNING_EXTRA_AI_REVIEW_LABEL = 'Running Extra AI Review...';
 
 function asText(value) {
@@ -60,17 +61,24 @@ export function buildSharedReportTurnCopy(draftAuthorRole, { counterpartyName } 
     sendCtaLabel: `Send to ${counterpartyDisplay}`,
     sentCtaLabel: `Sent to ${counterpartyDisplay}`,
     signInToSendLabel: `Please sign in to send updates to ${counterpartyDisplay}.`,
-    step3Description: 'Review your response package, then optionally run an extra AI review before sending.',
-    noReportMessage: 'No extra AI review has been generated yet. You can still edit and send your response.',
+    step3Description: 'Review your response package, run AI mediation, then optionally use one extra AI review before sending.',
+    noReportMessage: 'No AI mediation review has been generated yet. You can still edit and send your response.',
     proposalDetailsDescription: 'Read-only current opportunity state after your edits.',
   };
 }
 
-export function getRecipientExtraAiReviewActionLabel({ isPending = false, hasExisting = false } = {}) {
+export function getRecipientAiReviewActionLabel({ isPending = false, isExtraReview = false } = {}) {
+  if (!isExtraReview) {
+    return isPending ? RUNNING_AI_MEDIATION_LABEL : RUN_AI_MEDIATION_LABEL;
+  }
+  return getRecipientExtraAiReviewActionLabel({ isPending });
+}
+
+export function getRecipientExtraAiReviewActionLabel({ isPending = false } = {}) {
   if (isPending) {
     return RUNNING_EXTRA_AI_REVIEW_LABEL;
   }
-  return hasExisting ? RERUN_EXTRA_AI_REVIEW_LABEL : RUN_EXTRA_AI_REVIEW_LABEL;
+  return RUN_EXTRA_AI_REVIEW_LABEL;
 }
 
 export function getSharedReportSendActionLabel(draftAuthorRole, { isSent = false, isPending = false, counterpartyName } = {}) {

@@ -956,7 +956,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('Prompt2 evaluate requires owner-enabled recipient AI review and does not reuse can_reevaluate as the gate', async () => {
+  test('Prompt2 evaluate always allows the first recipient AI review and only gates the extra review', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -978,7 +978,10 @@ if (!hasDatabaseUrl()) {
     const disallowedWorkspaceRes = await getRecipientWorkspace(disallowed.token, disallowedRecipientCookie);
     assert.equal(disallowedWorkspaceRes.statusCode, 200);
     assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_reevaluate, false);
-    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, false);
+    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, true);
+    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
+    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
+    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.extra_ai_review_enabled, false);
 
     const allowed = await createSharedReportLink(ownerCookie, comparison.id, 'recipient2@example.com', {
       canEdit: true,
@@ -1016,8 +1019,25 @@ if (!hasDatabaseUrl()) {
       assert.equal(saveDisallowedDraftRes.statusCode, 200);
 
       const disallowedInitialEvaluateRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
-      assert.equal(disallowedInitialEvaluateRes.statusCode, 403);
-      assert.equal(disallowedInitialEvaluateRes.jsonBody().error.code, 'recipient_ai_review_not_enabled');
+      assert.equal(disallowedInitialEvaluateRes.statusCode, 200);
+      assert.equal(Boolean(disallowedInitialEvaluateRes.jsonBody()?.evaluation_id), true);
+
+      const changedDisallowedDraftRes = await saveRecipientDraft(disallowed.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient materially updates the same round after the first review and should now require the owner extra-review toggle.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential details change after the first review for extra-review gating.',
+        },
+        workflow_step: 2,
+      }, disallowedRecipientCookie);
+      assert.equal(changedDisallowedDraftRes.statusCode, 200);
+
+      const disallowedExtraEvaluateRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
+      assert.equal(disallowedExtraEvaluateRes.statusCode, 403);
+      assert.equal(disallowedExtraEvaluateRes.jsonBody().error.code, 'recipient_extra_ai_review_not_enabled');
 
       const saveAllowedDraftRes = await saveRecipientDraft(allowed.token, {
         shared_payload: {
@@ -1036,19 +1056,39 @@ if (!hasDatabaseUrl()) {
       assert.equal(allowedWorkspaceRes.statusCode, 200);
       assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.can_reevaluate, false);
       assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, true);
+      assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
+      assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
+      assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.extra_ai_review_enabled, true);
 
-      const allowedRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
-      assert.equal(allowedRes.statusCode, 200);
-      const body = allowedRes.jsonBody();
-      assert.equal(body.ok, true);
-      assert.equal(Boolean(body.evaluation_id), true);
-      assert.equal(typeof body.evaluation.public_report, 'object');
+      const allowedInitialEvaluateRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
+      assert.equal(allowedInitialEvaluateRes.statusCode, 200);
+      const initialBody = allowedInitialEvaluateRes.jsonBody();
+      assert.equal(initialBody.ok, true);
+      assert.equal(Boolean(initialBody.evaluation_id), true);
+      assert.equal(typeof initialBody.evaluation.public_report, 'object');
+
+      const changedAllowedDraftRes = await saveRecipientDraft(allowed.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient changes the same round after the first review and should be allowed one extra owner-enabled AI review.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential contribution changes for the owner-enabled extra review.',
+        },
+        workflow_step: 2,
+      }, allowedRecipientCookie);
+      assert.equal(changedAllowedDraftRes.statusCode, 200);
+
+      const allowedExtraEvaluateRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
+      assert.equal(allowedExtraEvaluateRes.statusCode, 200);
+      assert.equal(Boolean(allowedExtraEvaluateRes.jsonBody()?.evaluation_id), true);
     } finally {
       globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
     }
   });
 
-  test('Owner can enable and disable recipient AI review access without charging blocked attempts', async () => {
+  test('Owner can enable one extra recipient AI review without charging blocked attempts or allowing unlimited reruns', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -1092,9 +1132,25 @@ if (!hasDatabaseUrl()) {
       }, recipientCookie);
       assert.equal(saveDraftRes.statusCode, 200);
 
+      const initialEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(initialEvaluateRes.statusCode, 200);
+
+      const changedDraftRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient changes the same round after the first review and now needs an owner-enabled extra AI review.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential toggle test details after the first review.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(changedDraftRes.statusCode, 200);
+
       const initiallyBlockedRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(initiallyBlockedRes.statusCode, 403);
-      assert.equal(initiallyBlockedRes.jsonBody()?.error?.code, 'recipient_ai_review_not_enabled');
+      assert.equal(initiallyBlockedRes.jsonBody()?.error?.code, 'recipient_extra_ai_review_not_enabled');
 
       const enableRes = await updateSharedReportLink(link.token, ownerCookie, {
         allowRecipientAiReview: true,
@@ -1105,15 +1161,22 @@ if (!hasDatabaseUrl()) {
       const enabledEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(enabledEvaluateRes.statusCode, 200);
 
-      const disableRes = await updateSharedReportLink(link.token, ownerCookie, {
-        allowRecipientAiReview: false,
-      });
-      assert.equal(disableRes.statusCode, 200);
-      assert.equal(disableRes.jsonBody()?.sharedReport?.allow_recipient_ai_review, false);
+      const thirdDraftRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient applies a third materially different update in the same round and should hit the one-extra-review cap.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential toggle test details for the capped third attempt.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(thirdDraftRes.statusCode, 200);
 
       const blockedAgainRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(blockedAgainRes.statusCode, 403);
-      assert.equal(blockedAgainRes.jsonBody()?.error?.code, 'recipient_ai_review_not_enabled');
+      assert.equal(blockedAgainRes.statusCode, 409);
+      assert.equal(blockedAgainRes.jsonBody()?.error?.code, 'recipient_rereview_limit_reached');
 
       const db = getDb();
       const rows = await db.execute(sql`
@@ -1123,13 +1186,13 @@ if (!hasDatabaseUrl()) {
         order by created_at asc
       `);
       const successRows = rows.rows.filter((row) => String(row?.status || '') === 'success');
-      assert.equal(successRows.length, 1);
+      assert.equal(successRows.length, 2);
     } finally {
       globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
     }
   });
 
-  test('Recipient can still save and send back when extra AI review is disabled, and send-back does not create a full review run', async () => {
+  test('Recipient can still run the first AI review and send back when extra AI review is disabled, and send-back does not create an additional review run', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -1151,7 +1214,10 @@ if (!hasDatabaseUrl()) {
 
     const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
     assert.equal(workspaceRes.statusCode, 200);
-    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, false);
+    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, true);
+    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
+    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
+    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.extra_ai_review_enabled, false);
     assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_send_back, true);
 
     const saveRes = await saveRecipientDraft(link.token, {
@@ -1167,9 +1233,14 @@ if (!hasDatabaseUrl()) {
     }, recipientCookie);
     assert.equal(saveRes.statusCode, 200);
 
-    const blockedEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-    assert.equal(blockedEvaluateRes.statusCode, 403);
-    assert.equal(blockedEvaluateRes.jsonBody()?.error?.code, 'recipient_ai_review_not_enabled');
+    const initialEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(initialEvaluateRes.statusCode, 200);
+
+    const postReviewWorkspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+    assert.equal(postReviewWorkspaceRes.statusCode, 200);
+    assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, false);
+    assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.has_initial_ai_review, true);
+    assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
 
     const sendBackRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
     assert.equal(sendBackRes.statusCode, 200);
@@ -1182,7 +1253,8 @@ if (!hasDatabaseUrl()) {
       where shared_link_id = (select id from shared_links where token = ${link.token})
       order by created_at asc
     `);
-    assert.equal(reviewRunRows.rows.length, 0);
+    assert.equal(reviewRunRows.rows.length, 1);
+    assert.equal(String(reviewRunRows.rows[0]?.status || ''), 'success');
 
     const sentRevisionRows = await db.execute(sql`
       select status
@@ -3276,6 +3348,27 @@ if (!hasDatabaseUrl()) {
       }, recipientCookie);
       assert.equal(secondSaveRes.statusCode, 200);
 
+      const initialLaterRoundEvaluateRes = await evaluateRecipientDraft(
+        recipientRoundTwoToken,
+        {},
+        recipientCookie,
+        { engine: 'v2' },
+      );
+      assert.equal(initialLaterRoundEvaluateRes.statusCode, 200);
+
+      const changedSecondSaveRes = await saveRecipientDraft(recipientRoundTwoToken, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient round two adds a further update after the initial review and now needs the owner to allow one extra AI review.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient round two internal note changes after the initial review for extra-review gating.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(changedSecondSaveRes.statusCode, 200);
+
       const disabledLaterRoundEvaluateRes = await evaluateRecipientDraft(
         recipientRoundTwoToken,
         {},
@@ -3283,7 +3376,7 @@ if (!hasDatabaseUrl()) {
         { engine: 'v2' },
       );
       assert.equal(disabledLaterRoundEvaluateRes.statusCode, 403);
-      assert.equal(disabledLaterRoundEvaluateRes.jsonBody()?.error?.code, 'recipient_ai_review_not_enabled');
+      assert.equal(disabledLaterRoundEvaluateRes.jsonBody()?.error?.code, 'recipient_extra_ai_review_not_enabled');
 
       const enableLaterRoundReviewRes = await updateSharedReportLink(recipientRoundTwoToken, ownerCookie, {
         allowRecipientAiReview: true,

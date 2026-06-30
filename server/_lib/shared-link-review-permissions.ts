@@ -29,6 +29,10 @@ function parseBooleanLike(value: unknown): boolean | null {
 
 function readRecipientAiReviewValue(source: Record<string, unknown>) {
   const directKeys = [
+    'allow_recipient_extra_ai_review',
+    'allowRecipientExtraAiReview',
+    'recipient_extra_ai_review_enabled',
+    'recipientExtraAiReviewEnabled',
     'allow_recipient_ai_review',
     'allowRecipientAiReview',
     'recipient_ai_reviews_enabled',
@@ -54,6 +58,8 @@ export function getRecipientAiReviewEnabled(source: unknown) {
   return readRecipientAiReviewValue(reportMetadata) ?? false;
 }
 
+export const getRecipientExtraAiReviewEnabled = getRecipientAiReviewEnabled;
+
 export function mergeRecipientAiReviewIntoReportMetadata(
   reportMetadata: unknown,
   enabled: boolean,
@@ -64,6 +70,8 @@ export function mergeRecipientAiReviewIntoReportMetadata(
   };
 }
 
+export const mergeRecipientExtraAiReviewIntoReportMetadata = mergeRecipientAiReviewIntoReportMetadata;
+
 export function readRecipientAiReviewEnabledFromBody(
   body: Record<string, unknown>,
   fallback = false,
@@ -71,3 +79,5 @@ export function readRecipientAiReviewEnabledFromBody(
   const parsed = readRecipientAiReviewValue(toObject(body));
   return parsed ?? fallback;
 }
+
+export const readRecipientExtraAiReviewEnabledFromBody = readRecipientAiReviewEnabledFromBody;

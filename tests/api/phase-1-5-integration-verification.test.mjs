@@ -543,6 +543,32 @@ if (!hasDatabaseUrl()) {
       }, recipientCookie);
       assert.equal(recipientRoundTwoSaveRes.statusCode, 200);
 
+      const initialLaterRoundEvalRes = await evaluateRecipientDraft(
+        recipientRoundTwoToken,
+        {},
+        recipientCookie,
+        { engine: 'v2' },
+      );
+      assert.equal(initialLaterRoundEvalRes.statusCode, 200);
+
+      const changedRecipientRoundTwoSaveRes = await saveRecipientDraft(recipientRoundTwoToken, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: `
+            We are aligned on the main pilot structure. After the initial review, the only new asks are tighter final approval routing,
+            a cleaner legal sign-off sequence, and signature logistics so the close path stays explicit.
+          `,
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: `
+            Internal: The first review is enough for baseline alignment. This second pass is only to test the one-extra-review gate.
+          `,
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(changedRecipientRoundTwoSaveRes.statusCode, 200);
+
       const blockedLaterRoundEvalRes = await evaluateRecipientDraft(
         recipientRoundTwoToken,
         {},
@@ -550,7 +576,7 @@ if (!hasDatabaseUrl()) {
         { engine: 'v2' },
       );
       assert.equal(blockedLaterRoundEvalRes.statusCode, 403);
-      assert.equal(blockedLaterRoundEvalRes.jsonBody()?.error?.code, 'recipient_ai_review_not_enabled');
+      assert.equal(blockedLaterRoundEvalRes.jsonBody()?.error?.code, 'recipient_extra_ai_review_not_enabled');
 
       const enableLaterRoundReviewRes = await updateSharedReportLink(recipientRoundTwoToken, ownerCookie, {
         allowRecipientAiReview: true,

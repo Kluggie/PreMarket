@@ -61,6 +61,7 @@ import {
   buildDefaultSharedPayload,
   getCurrentRecipientDraft,
   getPayloadText,
+  getRecipientAiReviewStateForRound,
   getToken,
   logTokenEvent,
   mapRecipientSafeEvaluationDiagnostics,
@@ -72,14 +73,13 @@ import {
   releaseAiMediationReviewReservation,
   reserveAiMediationReviewCredit,
 } from '../../../_lib/starter-entitlements.js';
-import { getRecipientAiReviewEnabled } from '../../../_lib/shared-link-review-permissions.js';
 import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewStage.js';
 
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
-const RECIPIENT_AI_REVIEW_NOT_ENABLED_MESSAGE =
-  'The owner has not enabled extra AI review for this link. You can still edit and send your response.';
+const RECIPIENT_EXTRA_AI_REVIEW_NOT_ENABLED_MESSAGE =
+  'The owner has not enabled an extra AI review for this link. You can still edit and send your response.';
 const RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE =
   'An extra AI review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
 
@@ -581,7 +581,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       sharedTextSnapshot:
         asText(sharedSnapshotByRound.get(Number(entry.round || 0))) || entry.sharedTextSnapshot,
     }));
-    const priorBilateralRounds = normalizedExchangeHistory.filter((entry) => entry.report);
+    const priorBilateralRounds = normalizedExchangeHistory.filter(
+      (entry) =>
+        entry.report &&
+        Number(entry.round || 0) > 0 &&
+        Number(entry.round || 0) < outgoingRoundNumber,
+    );
     const reviewContextHistory = buildReviewContextHistoryState({
       contributions: sharedHistory.contributions,
       outgoingRoundNumber,
@@ -663,20 +668,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       sharedText,
       confidentialText: confidentialBundle,
     });
-    const recipientAiReviewEnabled = getRecipientAiReviewEnabled(resolved.link);
-
-    if (!recipientAiReviewEnabled) {
-      throw new ApiError(
-        403,
-        'recipient_ai_review_not_enabled',
-        RECIPIENT_AI_REVIEW_NOT_ENABLED_MESSAGE,
-        {
-          exchange_round: outgoingRoundNumber,
-          shared_link_id: resolved.link.id,
-        },
-      );
-    }
-
     // Cache hit = exact same inputs already have a saved successful AI result,
     // so there is no model call and no owner review-credit usage.
     const [duplicateRun] = await resolved.db
@@ -744,53 +735,50 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     // Cache miss = inputs changed or no saved result exists. Before any model
     // call or owner review-credit reservation, enforce the per-round policy:
-    // 1) recipient full AI reviews must be owner-enabled for this link, and
-    // 2) each side gets at most one additional non-cached re-review per round.
-    const [roundReviewCountRow] = await resolved.db
-      .select({
-        runCount: sql<number>`count(*)::int`,
-      })
-      .from(schema.sharedReportEvaluationRuns)
-      .where(
-        and(
-          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
-          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
-          inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
-          sql`${schema.sharedReportEvaluationRuns.resultJson}->'input_trace'->>'exchange_round' = ${String(outgoingRoundNumber)}`,
-        ),
+    // 1) the first recipient review is always allowed,
+    // 2) an additional review is only allowed after the first successful result,
+    // 3) the owner toggle only governs that one additional review.
+    const reviewState = await getRecipientAiReviewStateForRound(resolved.db, {
+      link: resolved.link,
+      outgoingRoundNumber,
+    });
+
+    if (reviewState.nonCachedRunCount > 0 && !reviewState.hasInitialAiReview) {
+      throw new ApiError(
+        409,
+        'evaluation_already_running',
+        'AI mediation is already running for this draft.',
+        {
+          evaluation_id: reviewState.latestRunId,
+          revision_id: reviewState.latestRevisionId,
+          exchange_round: outgoingRoundNumber,
+          status: reviewState.latestStatus,
+        },
       );
+    }
 
-    const existingRoundRunCount = Number(roundReviewCountRow?.runCount || 0) || 0;
+    if (!reviewState.canRunInitialAiReview && !reviewState.extraAiReviewEnabled) {
+      throw new ApiError(
+        403,
+        'recipient_extra_ai_review_not_enabled',
+        RECIPIENT_EXTRA_AI_REVIEW_NOT_ENABLED_MESSAGE,
+        {
+          exchange_round: outgoingRoundNumber,
+          shared_link_id: resolved.link.id,
+        },
+      );
+    }
 
-    const [latestRoundReviewRun] = await resolved.db
-      .select({
-        id: schema.sharedReportEvaluationRuns.id,
-        revisionId: schema.sharedReportEvaluationRuns.revisionId,
-        status: schema.sharedReportEvaluationRuns.status,
-      })
-      .from(schema.sharedReportEvaluationRuns)
-      .where(
-        and(
-          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
-          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
-          inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
-          sql`${schema.sharedReportEvaluationRuns.resultJson}->'input_trace'->>'exchange_round' = ${String(outgoingRoundNumber)}`,
-        ),
-      )
-      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
-      .limit(1);
-
-    const additionalRoundReviewsUsed = Math.max(0, existingRoundRunCount - 1);
-    if (additionalRoundReviewsUsed >= 1) {
+    if (reviewState.extraAiReviewUsed) {
       throw new ApiError(
         409,
         'recipient_rereview_limit_reached',
         RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE,
         {
-          evaluation_id: latestRoundReviewRun?.id || null,
-          revision_id: latestRoundReviewRun?.revisionId || null,
+          evaluation_id: reviewState.latestRunId,
+          revision_id: reviewState.latestRevisionId,
           exchange_round: outgoingRoundNumber,
-          status: latestRoundReviewRun?.status || null,
+          status: reviewState.latestStatus,
         },
       );
     }

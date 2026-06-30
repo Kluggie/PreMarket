@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { ApiError } from '../../_lib/errors.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { newId } from '../../_lib/ids.js';
@@ -238,8 +238,26 @@ export async function resolveSharedReportToken(params: ResolveParams) {
 }
 
 export function buildShareView(link: any) {
+  return buildShareViewWithReviewState(link, {});
+}
+
+export function buildShareViewWithReviewState(
+  link: any,
+  reviewState: {
+    canRunAiReview?: boolean;
+    canRunInitialAiReview?: boolean;
+    canRunExtraAiReview?: boolean;
+    hasInitialAiReview?: boolean;
+    extraAiReviewEnabled?: boolean;
+    extraAiReviewUsed?: boolean;
+  } = {},
+) {
   const invitedEmail = normalizeEmail(link.recipientEmail) || null;
   const authorizedEmail = normalizeEmail(link.authorizedEmail) || null;
+  const extraAiReviewEnabled =
+    typeof reviewState.extraAiReviewEnabled === 'boolean'
+      ? reviewState.extraAiReviewEnabled
+      : getRecipientAiReviewEnabled(link);
   return {
     id: link.id,
     status: asText(link.status) || 'active',
@@ -256,7 +274,15 @@ export function buildShareView(link: any) {
       can_edit_shared: Boolean(link.canEdit),
       can_edit_confidential: Boolean(link.canEditConfidential),
       can_reevaluate: Boolean(link.canReevaluate),
-      can_run_ai_review: getRecipientAiReviewEnabled(link),
+      can_run_ai_review:
+        typeof reviewState.canRunAiReview === 'boolean'
+          ? reviewState.canRunAiReview
+          : extraAiReviewEnabled,
+      can_run_initial_ai_review: Boolean(reviewState.canRunInitialAiReview),
+      can_run_extra_ai_review: Boolean(reviewState.canRunExtraAiReview),
+      has_initial_ai_review: Boolean(reviewState.hasInitialAiReview),
+      extra_ai_review_enabled: extraAiReviewEnabled,
+      extra_ai_review_used: Boolean(reviewState.extraAiReviewUsed),
       can_send_back: Boolean(link.canSendBack),
     },
   };
@@ -499,6 +525,79 @@ export async function getLatestRecipientEvaluationRun(db: any, linkId: string) {
     )
     .limit(1);
   return run || null;
+}
+
+export async function getRecipientAiReviewStateForRound(
+  db: any,
+  params: {
+    link: any;
+    outgoingRoundNumber: number;
+  },
+) {
+  const extraAiReviewEnabled = getRecipientAiReviewEnabled(params.link);
+  // Shared-report send-back creates a new link token per bilateral round, so
+  // the current link already scopes evaluation runs to the active round. Using
+  // the persisted link id is more reliable than re-parsing `result_json`.
+  const linkRunWhereClause = and(
+    eq(schema.sharedReportEvaluationRuns.sharedLinkId, params.link.id),
+    eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+    inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
+  );
+
+  const [countRows, successfulCountRows, latestRunRows] = await Promise.all([
+    db
+      .select({
+        runCount: sql<number>`count(*)::int`,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(linkRunWhereClause),
+    db
+      .select({
+        runCount: sql<number>`count(*)::int`,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(
+        and(
+          linkRunWhereClause,
+          eq(schema.sharedReportEvaluationRuns.status, 'success'),
+        ),
+      ),
+    db
+      .select({
+        id: schema.sharedReportEvaluationRuns.id,
+        revisionId: schema.sharedReportEvaluationRuns.revisionId,
+        status: schema.sharedReportEvaluationRuns.status,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(linkRunWhereClause)
+      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+      .limit(1),
+  ]);
+
+  const countRow = countRows?.[0] || null;
+  const successfulCountRow = successfulCountRows?.[0] || null;
+  const nonCachedRunCount = Number(countRow?.runCount || 0) || 0;
+  const successfulRunCount = Number(successfulCountRow?.runCount || 0) || 0;
+  const hasInitialAiReview = successfulRunCount > 0;
+  const extraAiReviewUsed = Math.max(0, nonCachedRunCount - 1) >= 1;
+  const canRunInitialAiReview = nonCachedRunCount === 0;
+  const canRunExtraAiReview =
+    hasInitialAiReview && extraAiReviewEnabled && !extraAiReviewUsed;
+  const latestRoundRun = latestRunRows?.[0] || null;
+
+  return {
+    extraAiReviewEnabled,
+    nonCachedRunCount,
+    successfulRunCount,
+    hasInitialAiReview,
+    extraAiReviewUsed,
+    canRunInitialAiReview,
+    canRunExtraAiReview,
+    canRunAiReview: canRunInitialAiReview || canRunExtraAiReview,
+    latestRunId: latestRoundRun?.id || null,
+    latestRevisionId: latestRoundRun?.revisionId || null,
+    latestStatus: asText(latestRoundRun?.status) || null,
+  };
 }
 
 export async function getLatestRecipientSentRevision(db: any, linkId: string) {

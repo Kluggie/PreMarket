@@ -392,6 +392,27 @@ if (!hasDatabaseUrl()) {
       }, recipientCookie);
       assert.equal(secondSaveRes.statusCode, 200);
 
+      const initialLaterRoundEvaluateRes = await evaluateRecipientDraft(
+        recipientRoundTwoToken,
+        {},
+        recipientCookie,
+        { engine: 'v2' },
+      );
+      assert.equal(initialLaterRoundEvaluateRes.statusCode, 200);
+
+      const changedSecondSaveRes = await saveRecipientDraft(recipientRoundTwoToken, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient round two adds a follow-up change after the initial review and now needs the owner to enable one extra AI review.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient round two follow-up confidential note for extra-review gating coverage.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(changedSecondSaveRes.statusCode, 200);
+
       const disabledLaterRoundEvaluateRes = await evaluateRecipientDraft(
         recipientRoundTwoToken,
         {},
@@ -399,7 +420,7 @@ if (!hasDatabaseUrl()) {
         { engine: 'v2' },
       );
       assert.equal(disabledLaterRoundEvaluateRes.statusCode, 403);
-      assert.equal(disabledLaterRoundEvaluateRes.jsonBody()?.error?.code, 'recipient_ai_review_not_enabled');
+      assert.equal(disabledLaterRoundEvaluateRes.jsonBody()?.error?.code, 'recipient_extra_ai_review_not_enabled');
 
       const enableLaterRoundReviewRes = await updateSharedReportLink(recipientRoundTwoToken, ownerCookie, {
         allowRecipientAiReview: true,

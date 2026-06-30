@@ -148,8 +148,12 @@ test('recipient Step 3 review package keeps send-back available before any extra
     'Review package must expose sendToCounterparty before any extra AI review runs',
   );
   assert.ok(
-    reviewPkgBlock.includes('getRecipientExtraAiReviewActionLabel'),
-    'Review package must label the optional recipient AI action as an extra AI review',
+    reviewPkgBlock.includes('getRecipientAiReviewActionLabel'),
+    'Review package must label the recipient AI action according to whether the next run is initial or extra',
+  );
+  assert.ok(
+    reviewPkgBlock.includes('nextRecipientReviewMode === EXTRA_AI_REVIEW_MODE'),
+    'Review package must switch the recipient AI action between initial mediation and the one extra review',
   );
 });
 
@@ -158,15 +162,15 @@ test('recipient extra AI review warns about owner credits and surfaces disabled 
   const routeSource = await readFile(SHARED_REPORT_EVALUATE_ROUTE_PATH, 'utf8');
 
   assert.ok(
-    source.includes("This will run an extra AI review using the opportunity owner's AI mediation review credits."),
+    source.includes("This will run one extra AI review using the opportunity owner's AI mediation review credits."),
     'Recipient-triggered extra review must warn that owner credits will be used',
   );
   assert.ok(
-    source.includes('recipient_ai_review_not_enabled'),
-    'SharedReport must map the recipient AI review enablement code',
+    source.includes('recipient_extra_ai_review_not_enabled'),
+    'SharedReport must map the owner-controlled extra AI review enablement code',
   );
   assert.ok(
-    source.includes('The owner has not enabled extra AI review for this link. You can still edit and send your response.'),
+    source.includes('The owner has not enabled an extra AI review for this link. You can still edit and send your response.'),
     'SharedReport must surface the disabled-by-owner copy while keeping send-back available',
   );
   assert.ok(
@@ -216,7 +220,7 @@ test('recipient Run AI Mediation settles the click handler on route failure', as
   const start = source.indexOf('const runEvaluationFromReview = async');
   assert.ok(start >= 0, 'Expected runEvaluationFromReview handler');
 
-  const block = source.slice(start, start + 900);
+  const block = source.slice(start, start + 1400);
   assert.ok(
     block.includes('await evaluateMutation.mutateAsync()'),
     'Run Mediation must trigger the evaluate mutation',
@@ -231,14 +235,18 @@ test('recipient Run AI Mediation shows a specific timeout error and Vercel allow
   const source = await readFile(SHARED_REPORT_PATH, 'utf8');
   const helperStart = source.indexOf('function toFriendlyEvaluateError');
   assert.ok(helperStart >= 0, 'Expected toFriendlyEvaluateError');
-  const helperBlock = source.slice(helperStart, helperStart + 850);
+  const helperBlock = source.slice(helperStart, helperStart + 800);
   assert.ok(
     helperBlock.includes("Number(error?.status || 0) === 504"),
     'Shared report should recognize gateway timeouts',
   );
   assert.ok(
-    helperBlock.includes('The extra AI review took too long to complete'),
-    'Shared report should show an extra-review-specific timeout message',
+    source.includes('AI mediation took too long to complete'),
+    'Shared report should show an initial-review timeout message',
+  );
+  assert.ok(
+    source.includes('The extra AI review took too long to complete'),
+    'Shared report should also preserve the extra-review-specific timeout message',
   );
 
   const vercelConfig = JSON.parse(await readFile(VERCEL_CONFIG_PATH, 'utf8'));
@@ -318,8 +326,8 @@ test('generation-service fallback returns to the existing retry screen instead o
 
   assert.ok(source.includes('isGenerationFailureFallback'));
   assert.ok(source.includes('setShowStep3Results(!generationFailed)'));
-  assert.ok(source.includes('Extra AI review could not be completed. Please retry.'));
-  assert.ok(source.includes('No substantive mediation result was produced. Please retry.'));
+  assert.ok(source.includes('AI mediation could not be completed. Please retry.'));
+  assert.ok(source.includes('The AI mediation review could not be completed. No substantive mediation result was produced. Please retry.'));
 });
 
 test('recipient workspace strips internal evaluation diagnostics from the public run view', () => {
@@ -403,8 +411,10 @@ test('showStep3Results controls which Step 3 view is active', async () => {
 
   // Valid evaluation results show the report, while a generation failure
   // returns to the existing retry screen.
-  const evalOnSuccess = source.indexOf("toast.success('Extra AI review ready')");
-  assert.ok(evalOnSuccess >= 0, 'Expected evaluation success toast');
+  assert.ok(
+    source.includes("successToast: isExtraReview ? 'Extra AI review ready' : 'AI mediation ready'"),
+    'Expected mode-aware evaluation success toast copy',
+  );
   assert.ok(
     source.includes('setShowStep3Results(!generationFailed)'),
     'evaluateMutation.onSuccess must show results only when generation succeeded',

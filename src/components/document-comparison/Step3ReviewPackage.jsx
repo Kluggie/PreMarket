@@ -306,27 +306,18 @@ export default function Step3ReviewPackage({
                   helper={
                     resolvedReviewContextEstimate.previousReviewsConsidered > 0
                       ? 'Completed bilateral AI reviews may be referenced for continuity'
-                      : 'No previous AI mediation reviews are currently included'
+                    : 'No previous AI mediation reviews are currently included'
                   }
                 />
               ) : null}
               <ContextStat
-                label="Retrieved context chunks"
-                value={
-                  resolvedReviewContextEstimate.retrievedChunkCount > 0
-                    ? resolvedReviewContextEstimate.retrievedChunkCount.toLocaleString()
-                    : 'None'
-                }
-                helper={
-                  resolvedReviewContextEstimate.retrievedContextTokens > 0
-                    ? formatTokenCount(resolvedReviewContextEstimate.retrievedContextTokens)
-                    : 'No retrieved supporting context is currently estimated'
-                }
-              />
-              <ContextStat
                 label="Estimated AI context load"
                 value={formatTokenCount(resolvedReviewContextEstimate.totalEstimatedInputTokens)}
-                helper={`${formatPercent(resolvedReviewContextEstimate.usageRatio)} of the evaluator budget`}
+                helper={
+                  resolvedReviewContextEstimate.retrievedContextTokens > 0
+                    ? `${formatPercent(resolvedReviewContextEstimate.usageRatio)} of the evaluator budget, including ${formatTokenCount(resolvedReviewContextEstimate.retrievedContextTokens)} from ${resolvedReviewContextEstimate.retrievedChunkCount.toLocaleString()} retrieved context chunk${resolvedReviewContextEstimate.retrievedChunkCount === 1 ? '' : 's'}`
+                    : `${formatPercent(resolvedReviewContextEstimate.usageRatio)} of the evaluator budget`
+                }
               />
               <ContextStat
                 label="Omitted due to capacity"

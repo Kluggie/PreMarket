@@ -1436,9 +1436,9 @@ export default function DocumentComparisonDetail() {
               <div className="rounded-lg border border-slate-200 bg-white p-3">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium text-slate-900">Allow Recipient to Run Extra AI Review</p>
+                    <p className="text-sm font-medium text-slate-900">Allow Recipient to Run One Extra AI Review</p>
                     <p className="text-xs text-slate-600">
-                      When enabled, the recipient can run an additional full AI mediation review from their side. This counts against your monthly AI review limit, but responding and sending back remain available either way.
+                      When enabled, the recipient can run one additional AI mediation review after their first review. This counts against your monthly AI review limit. The recipient can always run their first review and send their response.
                     </p>
                   </div>
                   <Switch
@@ -1454,7 +1454,7 @@ export default function DocumentComparisonDetail() {
                         allowRecipientAiReview: checked,
                       })
                     }
-                    aria-label="Allow Recipient to Run Extra AI Review"
+                    aria-label="Allow Recipient to Run One Extra AI Review"
                   />
                 </div>
                 {updateShareSettingsMutation.isPending ? (

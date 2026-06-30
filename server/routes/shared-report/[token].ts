@@ -42,9 +42,10 @@ import {
   buildDefaultSharedPayload,
   buildLatestReport,
   buildParentView,
-  buildShareView,
+  buildShareViewWithReviewState,
   getCurrentRecipientDraft,
   getPayloadText,
+  getRecipientAiReviewStateForRound,
   getLatestRecipientEvaluationRun,
   getLatestRecipientSentRevision,
   getToken,
@@ -270,6 +271,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       token,
       consumeView: true,
     });
+    const currentLinkRound = resolveSharedReportLinkRound(resolved.link.reportMetadata);
+    const activeRoundNumber = currentLinkRound + 1;
     const lineageLinks = await loadSharedReportLinkLineage(resolved.db, resolved.link);
     const comparisonId = asText(resolved.comparison?.id || resolved.proposal?.documentComparisonId);
     const lineageScope = buildLineageScopeFromLinks(lineageLinks, comparisonId);
@@ -282,6 +285,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       activityEvents,
       lineageRevisionRows,
       lineageEvaluationRows,
+      recipientAiReviewState,
     ] = await Promise.all([
       getCurrentRecipientDraft(resolved.db, resolved.link.id),
       getLatestRecipientEvaluationRun(resolved.db, resolved.link.id),
@@ -342,6 +346,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             .from(schema.sharedReportEvaluationRuns)
             .where(inArray(schema.sharedReportEvaluationRuns.sharedLinkId, lineageScope.lineageLinkIds))
         : Promise.resolve([]),
+      getRecipientAiReviewStateForRound(resolved.db, {
+        link: resolved.link,
+        outgoingRoundNumber: activeRoundNumber,
+      }),
     ]);
     const currentUserId = asText(currentUser?.id || currentUser?.sub);
     const proposalOwnerUserId = asText(resolved.proposal?.userId);
@@ -378,12 +386,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ),
       },
     });
-    const currentLinkRound = resolveSharedReportLinkRound(resolved.link.reportMetadata);
     const draftAuthorRole = getLinkRecipientAuthorRole({
       proposal: resolved.proposal,
       link: resolved.link,
     });
-    const activeRoundNumber = currentLinkRound + 1;
 
     if (process.env.NODE_ENV !== 'production') {
       console.info(
@@ -448,7 +454,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           outcome: parentOutcome,
         })
       : null;
-    const shareView: any = buildShareView(resolved.link);
+    const shareView: any = buildShareViewWithReviewState(resolved.link, recipientAiReviewState);
     const isAuthenticated = Boolean(currentUser);
     const canViewAuthorizationDetails = Boolean(isAuthenticated && recipientAuthorization.aliasVerifiedMatch);
 

@@ -160,10 +160,12 @@ test('Step 3 UI distinguishes baseline proposal context from post-baseline histo
   assert.match(step3PackageSource, /AI context load/);
   assert.match(step3PackageSource, /Prior rounds considered/);
   assert.match(step3PackageSource, /Previous AI reviews/);
-  assert.match(step3PackageSource, /Retrieved context chunks/);
+  assert.match(step3PackageSource, /Estimated AI context load/);
+  assert.match(step3PackageSource, /retrieved context chunk/);
   assert.match(step3PackageSource, /No post-baseline round history is currently included/);
   assert.match(step3PackageSource, /No previous AI mediation reviews are currently included/);
-  assert.match(step3PackageSource, /No retrieved supporting context is currently estimated/);
+  assert.doesNotMatch(step3PackageSource, /Retrieved context chunks/);
+  assert.doesNotMatch(step3PackageSource, /No retrieved supporting context is currently estimated/);
   assert.match(step3PackageSource, /Omitted due to capacity/);
 });
 
