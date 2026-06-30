@@ -265,7 +265,7 @@ export default function Step3ReviewPackage({
           </div>
 
           <div className="mt-4 pt-4 border-t border-slate-100 space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
               <ContextStat
                 label="Current bundle size"
                 value={`${resolvedReviewContextEstimate.currentBundleWords.toLocaleString()} words`}

@@ -683,6 +683,10 @@ export default function SharedReport() {
   const canRunRecipientAiReview = nextRecipientReviewMode === EXTRA_AI_REVIEW_MODE
     ? canRunRecipientExtraAiReview
     : canRunInitialRecipientAiReview;
+  const showInitialRecipientReviewAction =
+    !hasSuccessfulRecipientReview && canRunInitialRecipientAiReview;
+  const showRecipientExtraReviewAction =
+    hasSuccessfulRecipientReview && canRunRecipientExtraAiReview;
   const parent = workspaceQuery.data?.parent || null;
   const hasCanonicalParentStatus = Boolean(asText(parent?.primary_status_key));
   const parentThreadState = useMemo(
@@ -794,6 +798,7 @@ export default function SharedReport() {
     Boolean(isAuthenticated && invitedEmail) && !authorizedForCurrentUser;
 
   const canSendBack = Boolean(share?.permissions?.can_send_back);
+  const showRecipientSendAction = hasSuccessfulRecipientReview && canSendBack;
   const canUpdateOutcomeFromStep0 = Boolean(
     isAuthenticated &&
     asText(parent?.proposal_id) &&
@@ -2855,6 +2860,15 @@ export default function SharedReport() {
           ? RECIPIENT_EXTRA_AI_REVIEW_DISABLED_MESSAGE
           : ''
       : '';
+  const recipientReviewActionDisabled = step3IsEvaluationRunning || saveDraftMutation.isPending;
+  const recipientSendActionDisabled =
+    step3IsEvaluationRunning ||
+    sendBackMutation.isPending ||
+    saveDraftMutation.isPending ||
+    !canSendBack ||
+    Boolean(parentThreadState?.isClosed) ||
+    isSentToCounterparty ||
+    requiresRecipientVerification;
   const latestEvaluationTimelineTone = step3IsEvaluationFailed
     ? 'danger'
     : step3IsEvaluationRunning
@@ -2879,6 +2893,76 @@ export default function SharedReport() {
     latestEvaluationTimestamp: latestEvaluation?.created_at || latestEvaluation?.updated_at,
     formatDateTime,
   });
+  const renderRecipientStep3ActionBar = ({ includeEditAgain = false } = {}) => (
+    <div className="ml-auto flex max-w-full flex-col items-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {showInitialRecipientReviewAction ? (
+          <Button
+            type="button"
+            onClick={runEvaluationFromReview}
+            disabled={recipientReviewActionDisabled}
+            data-testid="step3-run-ai-review-button"
+          >
+            {step3IsEvaluationRunning
+              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              : <Sparkles className="w-4 h-4 mr-2" />}
+            {getRecipientAiReviewActionLabel({
+              isPending: step3IsEvaluationRunning,
+              isExtraReview: false,
+            })}
+          </Button>
+        ) : null}
+        {showRecipientExtraReviewAction ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={runEvaluationFromReview}
+            disabled={recipientReviewActionDisabled}
+            data-testid="step3-run-ai-review-button"
+          >
+            {step3IsEvaluationRunning
+              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              : <Sparkles className="w-4 h-4 mr-2" />}
+            {getRecipientAiReviewActionLabel({
+              isPending: step3IsEvaluationRunning,
+              isExtraReview: true,
+            })}
+          </Button>
+        ) : null}
+        {showRecipientSendAction ? (
+          <Button
+            type="button"
+            onClick={sendToCounterparty}
+            disabled={recipientSendActionDisabled}
+          >
+            {sendBackMutation.isPending
+              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              : <Send className="w-4 h-4 mr-2" />}
+            {getSharedReportSendActionLabel(draftDocumentOwner, {
+              isSent: isSentToCounterparty,
+              isPending: sendBackMutation.isPending,
+              counterpartyName: counterpartyDisplayName,
+            })}
+          </Button>
+        ) : null}
+        {includeEditAgain ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => { setShowStep3Results(false); setStep(2); }}
+            disabled={requiresRecipientVerification}
+          >
+            Edit again
+          </Button>
+        ) : null}
+      </div>
+      {step3ExtraAiReviewNotice ? (
+        <p className="max-w-md text-right text-xs text-amber-700">
+          {step3ExtraAiReviewNotice}
+        </p>
+      ) : null}
+    </div>
+  );
   const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
   const activeCoachHash = coachResultHash || 'unhashed';
   const appliedSuggestionIds = appliedSuggestionIdsByHash[activeCoachHash] || [];
@@ -3417,67 +3501,10 @@ export default function SharedReport() {
         {step === 3 ? (
           showStep3Results ? (
             <>
-              {step3ExtraAiReviewNotice ? (
-                <Alert className="bg-amber-50 border-amber-200">
-                  <AlertDescription className="text-amber-900">
-                    {step3ExtraAiReviewNotice}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
               <ComparisonEvaluationStep
                 stepTitle={`Step 3: ${MEDIATION_REVIEW_LABEL}`}
                 stepDescription={sendDirectionCopy.step3Description}
-                actionSlot={
-                  <>
-                    {canRunRecipientExtraAiReview ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={runEvaluationFromReview}
-                        disabled={step3IsEvaluationRunning || saveDraftMutation.isPending}
-                        data-testid="step3-run-ai-review-button"
-                      >
-                        {step3IsEvaluationRunning
-                          ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          : <Sparkles className="w-4 h-4 mr-2" />}
-                        {getRecipientAiReviewActionLabel({
-                          isPending: step3IsEvaluationRunning,
-                          isExtraReview: true,
-                        })}
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      onClick={sendToCounterparty}
-                      disabled={
-                        step3IsEvaluationRunning ||
-                        sendBackMutation.isPending ||
-                        saveDraftMutation.isPending ||
-                        !canSendBack ||
-                        Boolean(parentThreadState?.isClosed) ||
-                        isSentToCounterparty ||
-                        requiresRecipientVerification
-                      }
-                    >
-                      {sendBackMutation.isPending
-                        ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        : <Send className="w-4 h-4 mr-2" />}
-                      {getSharedReportSendActionLabel(draftDocumentOwner, {
-                        isSent: isSentToCounterparty,
-                        isPending: sendBackMutation.isPending,
-                        counterpartyName: counterpartyDisplayName,
-                      })}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => { setShowStep3Results(false); setStep(2); }}
-                      disabled={requiresRecipientVerification}
-                    >
-                      Edit again
-                    </Button>
-                  </>
-                }
+                actionSlot={renderRecipientStep3ActionBar({ includeEditAgain: true })}
                 activeTab={recipientDetailTab}
                 onTabChange={setRecipientDetailTab}
                 hasReportBadge={hasStep3Report}
@@ -3532,50 +3559,8 @@ export default function SharedReport() {
               }
               onBack={() => setStep(2)}
               onRunEvaluation={runEvaluationFromReview}
-              actionSlot={
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  {canRunRecipientAiReview ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={runEvaluationFromReview}
-                      disabled={step3IsEvaluationRunning || saveDraftMutation.isPending}
-                      data-testid="step3-run-ai-review-button"
-                    >
-                      {step3IsEvaluationRunning
-                        ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        : <Sparkles className="w-4 h-4 mr-2" />}
-                      {getRecipientAiReviewActionLabel({
-                        isPending: step3IsEvaluationRunning,
-                        isExtraReview: nextRecipientReviewMode === EXTRA_AI_REVIEW_MODE,
-                      })}
-                    </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    onClick={sendToCounterparty}
-                    disabled={
-                      sendBackMutation.isPending ||
-                      saveDraftMutation.isPending ||
-                      !canSendBack ||
-                      Boolean(parentThreadState?.isClosed) ||
-                      isSentToCounterparty ||
-                      requiresRecipientVerification
-                    }
-                  >
-                    {sendBackMutation.isPending
-                      ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      : <Send className="w-4 h-4 mr-2" />}
-                    {getSharedReportSendActionLabel(draftDocumentOwner, {
-                      isSent: isSentToCounterparty,
-                      isPending: sendBackMutation.isPending,
-                      counterpartyName: counterpartyDisplayName,
-                    })}
-                  </Button>
-                </div>
-              }
+              actionSlot={renderRecipientStep3ActionBar()}
               showRunAction={false}
-              runActionDisabledMessage={step3ExtraAiReviewNotice}
               backLabel="Edit again"
             />
           )

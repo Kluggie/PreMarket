@@ -131,7 +131,7 @@ test('recipient Step 3 review package receives current round bundle data', async
   );
 });
 
-test('recipient Step 3 review package keeps send-back available before any extra AI review runs', async () => {
+test('recipient Step 3 review package prioritizes initial mediation before send-back and keeps extra-review warnings out of the page shell', async () => {
   const source = await readFile(SHARED_REPORT_PATH, 'utf8');
 
   const reviewPkgStart = source.indexOf('<Step3ReviewPackage');
@@ -144,16 +144,28 @@ test('recipient Step 3 review package keeps send-back available before any extra
     'Review package must provide a custom recipient action slot',
   );
   assert.ok(
-    reviewPkgBlock.includes('onClick={sendToCounterparty}'),
-    'Review package must expose sendToCounterparty before any extra AI review runs',
+    source.includes('const showInitialRecipientReviewAction =') &&
+      source.includes('!hasSuccessfulRecipientReview && canRunInitialRecipientAiReview'),
+    'SharedReport must explicitly derive an initial-review action before any send-back action is shown',
   );
   assert.ok(
-    reviewPkgBlock.includes('getRecipientAiReviewActionLabel'),
+    source.includes('const showRecipientSendAction = hasSuccessfulRecipientReview && canSendBack;'),
+    'SharedReport must only expose send-back after a successful recipient review exists for the round',
+  );
+  assert.ok(
+    source.includes('getRecipientAiReviewActionLabel'),
     'Review package must label the recipient AI action according to whether the next run is initial or extra',
   );
   assert.ok(
-    reviewPkgBlock.includes('nextRecipientReviewMode === EXTRA_AI_REVIEW_MODE'),
-    'Review package must switch the recipient AI action between initial mediation and the one extra review',
+    source.includes('const renderRecipientStep3ActionBar =') &&
+      source.includes('showInitialRecipientReviewAction ? (') &&
+      source.includes('showRecipientExtraReviewAction ? (') &&
+      source.includes('showRecipientSendAction ? ('),
+    'Step 3 action rendering must distinguish initial review, extra review, and send-back instead of collapsing them into one permission path',
+  );
+  assert.ok(
+    !reviewPkgBlock.includes('runActionDisabledMessage={step3ExtraAiReviewNotice}'),
+    'The bundle review screen must not surface the extra-review-disabled warning as a page-level pre-review alert',
   );
 });
 
