@@ -46,6 +46,49 @@ export function toObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function extractRecipientAiReviewReport(source: unknown) {
+  const candidate = toObject(source);
+  const directReport = toObject(candidate.report);
+  if (Object.keys(directReport).length > 0) {
+    return directReport;
+  }
+
+  const evaluationResult = toObject(candidate.evaluation_result || candidate.evaluationResult);
+  const evaluationResultReport = toObject(evaluationResult.report);
+  if (Object.keys(evaluationResultReport).length > 0) {
+    return evaluationResultReport;
+  }
+
+  const resultJson = toObject(candidate.resultJson || candidate.result_json);
+  const resultJsonEvaluation = toObject(resultJson.evaluation_result || resultJson.evaluationResult);
+  const resultJsonReport = toObject(resultJsonEvaluation.report);
+  if (Object.keys(resultJsonReport).length > 0) {
+    return resultJsonReport;
+  }
+
+  const publicReport = toObject(
+    candidate.resultPublicReport || candidate.result_public_report || candidate.public_report,
+  );
+  if (Object.keys(publicReport).length > 0) {
+    return publicReport;
+  }
+
+  return candidate;
+}
+
+export function isGenerationFailureFallbackReport(report: unknown) {
+  const candidate = extractRecipientAiReviewReport(report);
+  return (
+    asText(candidate.generation_status).toLowerCase() === 'failed' &&
+    candidate.retry_recommended !== false
+  );
+}
+
+export function isSubstantiveRecipientAiReviewReport(report: unknown) {
+  const candidate = extractRecipientAiReviewReport(report);
+  return Object.keys(candidate).length > 0 && !isGenerationFailureFallbackReport(candidate);
+}
+
 function getCurrentUserId(currentUser: any) {
   return asText(currentUser?.id || currentUser?.sub || '');
 }
@@ -544,50 +587,42 @@ export async function getRecipientAiReviewStateForRound(
     inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
   );
 
-  const [countRows, successfulCountRows, latestRunRows] = await Promise.all([
-    db
-      .select({
-        runCount: sql<number>`count(*)::int`,
-      })
-      .from(schema.sharedReportEvaluationRuns)
-      .where(linkRunWhereClause),
-    db
-      .select({
-        runCount: sql<number>`count(*)::int`,
-      })
-      .from(schema.sharedReportEvaluationRuns)
-      .where(
-        and(
-          linkRunWhereClause,
-          eq(schema.sharedReportEvaluationRuns.status, 'success'),
-        ),
-      ),
-    db
-      .select({
-        id: schema.sharedReportEvaluationRuns.id,
-        revisionId: schema.sharedReportEvaluationRuns.revisionId,
-        status: schema.sharedReportEvaluationRuns.status,
-      })
-      .from(schema.sharedReportEvaluationRuns)
-      .where(linkRunWhereClause)
-      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
-      .limit(1),
-  ]);
+  const runRows = await db
+    .select({
+      id: schema.sharedReportEvaluationRuns.id,
+      revisionId: schema.sharedReportEvaluationRuns.revisionId,
+      status: schema.sharedReportEvaluationRuns.status,
+      resultJson: schema.sharedReportEvaluationRuns.resultJson,
+      resultPublicReport: schema.sharedReportEvaluationRuns.resultPublicReport,
+      createdAt: schema.sharedReportEvaluationRuns.createdAt,
+    })
+    .from(schema.sharedReportEvaluationRuns)
+    .where(linkRunWhereClause)
+    .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt));
 
-  const countRow = countRows?.[0] || null;
-  const successfulCountRow = successfulCountRows?.[0] || null;
-  const nonCachedRunCount = Number(countRow?.runCount || 0) || 0;
-  const successfulRunCount = Number(successfulCountRow?.runCount || 0) || 0;
+  const pendingRunCount = runRows.filter(
+    (row: any) => asText(row?.status).toLowerCase() === 'pending',
+  ).length;
+  const successfulRunCount = runRows.filter(
+    (row: any) =>
+      asText(row?.status).toLowerCase() === 'success' &&
+      isSubstantiveRecipientAiReviewReport(row?.resultPublicReport),
+  ).length;
+  const nonCachedRunCount = runRows.length;
   const hasInitialAiReview = successfulRunCount > 0;
-  const extraAiReviewUsed = Math.max(0, nonCachedRunCount - 1) >= 1;
-  const canRunInitialAiReview = nonCachedRunCount === 0;
+  const extraAiReviewUsed = successfulRunCount >= 2;
+  const canRunInitialAiReview = successfulRunCount === 0 && pendingRunCount === 0;
   const canRunExtraAiReview =
-    hasInitialAiReview && extraAiReviewEnabled && !extraAiReviewUsed;
-  const latestRoundRun = latestRunRows?.[0] || null;
+    hasInitialAiReview &&
+    extraAiReviewEnabled &&
+    !extraAiReviewUsed &&
+    pendingRunCount === 0;
+  const latestRoundRun = runRows?.[0] || null;
 
   return {
     extraAiReviewEnabled,
     nonCachedRunCount,
+    pendingRunCount,
     successfulRunCount,
     hasInitialAiReview,
     extraAiReviewUsed,

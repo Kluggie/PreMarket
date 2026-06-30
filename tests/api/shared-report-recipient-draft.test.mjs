@@ -1192,6 +1192,182 @@ if (!hasDatabaseUrl()) {
     }
   });
 
+  test('failed first recipient review stays retryable and does not set initial review state when extra AI review is disabled', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('failed_first_recipient_review');
+    const recipientEmail = 'failed-first-review@example.com';
+    const recipientCookie = makeRecipientCookie('failed_first_recipient_review', recipientEmail);
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Failed First Recipient Review',
+      docAText: 'Owner confidential baseline for failed first recipient review coverage.',
+      docBText: 'Shared baseline text that lets the recipient retry the initial mediation review.',
+    });
+
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      allowRecipientAiReview: false,
+    });
+
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'retry',
+        executive_summary: 'No substantive mediation result was produced.',
+        narrative_valid: false,
+        generation_status: 'failed',
+        retry_recommended: true,
+      },
+      evaluation_provider: 'test',
+      similarity_score: 0,
+    });
+
+    try {
+      const saveDraftRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient first-pass shared response that should remain eligible for retry after a failed AI mediation attempt.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential context for the failed first-review retry test.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(saveDraftRes.statusCode, 200);
+
+      const firstEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(firstEvaluateRes.statusCode, 200);
+      assert.equal(Boolean(firstEvaluateRes.jsonBody()?.evaluation_id), true);
+
+      const workspaceAfterFirstRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceAfterFirstRes.statusCode, 200);
+      assert.equal(workspaceAfterFirstRes.jsonBody()?.share?.permissions?.has_initial_ai_review, false);
+      assert.equal(workspaceAfterFirstRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
+      assert.equal(workspaceAfterFirstRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
+      assert.equal(workspaceAfterFirstRes.jsonBody()?.share?.permissions?.extra_ai_review_used, false);
+
+      const secondEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(secondEvaluateRes.statusCode, 200);
+      assert.notEqual(
+        String(secondEvaluateRes.jsonBody()?.evaluation_id || ''),
+        String(firstEvaluateRes.jsonBody()?.evaluation_id || ''),
+      );
+      assert.notEqual(secondEvaluateRes.jsonBody()?.cached, true);
+
+      const workspaceAfterSecondRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceAfterSecondRes.statusCode, 200);
+      assert.equal(workspaceAfterSecondRes.jsonBody()?.share?.permissions?.has_initial_ai_review, false);
+      assert.equal(workspaceAfterSecondRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
+      assert.equal(workspaceAfterSecondRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
+      assert.equal(workspaceAfterSecondRes.jsonBody()?.share?.permissions?.extra_ai_review_used, false);
+    } finally {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+    }
+  });
+
+  test('failed extra recipient AI review does not consume the one extra allowance and remains retryable', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('failed_extra_recipient_review');
+    const recipientEmail = 'failed-extra-review@example.com';
+    const recipientCookie = makeRecipientCookie('failed_extra_recipient_review', recipientEmail);
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Failed Extra Recipient Review',
+      docAText: 'Owner confidential baseline for failed extra recipient review coverage.',
+      docBText: 'Shared baseline text that supports an initial review and one retryable failed extra review.',
+    });
+
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      allowRecipientAiReview: true,
+    });
+
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'proceed',
+        executive_summary: 'Initial mediation review completed successfully.',
+      },
+      evaluation_provider: 'test',
+      similarity_score: 75,
+    });
+
+    try {
+      const saveInitialDraftRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient shared response for the successful initial mediation review before the failed extra attempt.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential notes for the successful initial mediation review.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(saveInitialDraftRes.statusCode, 200);
+
+      const initialEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(initialEvaluateRes.statusCode, 200);
+
+      const changedDraftRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient materially changes the same round and then hits a failed extra AI review that must stay retryable.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential notes for the failed extra AI review retry test.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(changedDraftRes.statusCode, 200);
+
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+        report: {
+          recommendation: 'retry',
+          executive_summary: 'Extra AI review produced no substantive result.',
+          narrative_valid: false,
+          generation_status: 'failed',
+          retry_recommended: true,
+        },
+        evaluation_provider: 'test',
+        similarity_score: 0,
+      });
+
+      const firstExtraEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(firstExtraEvaluateRes.statusCode, 200);
+      assert.equal(Boolean(firstExtraEvaluateRes.jsonBody()?.evaluation_id), true);
+
+      const workspaceAfterFailedExtraRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceAfterFailedExtraRes.statusCode, 200);
+      assert.equal(workspaceAfterFailedExtraRes.jsonBody()?.share?.permissions?.has_initial_ai_review, true);
+      assert.equal(workspaceAfterFailedExtraRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, false);
+      assert.equal(workspaceAfterFailedExtraRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, true);
+      assert.equal(workspaceAfterFailedExtraRes.jsonBody()?.share?.permissions?.extra_ai_review_used, false);
+
+      const secondExtraEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(secondExtraEvaluateRes.statusCode, 200);
+      assert.notEqual(
+        String(secondExtraEvaluateRes.jsonBody()?.evaluation_id || ''),
+        String(firstExtraEvaluateRes.jsonBody()?.evaluation_id || ''),
+      );
+      assert.notEqual(secondExtraEvaluateRes.jsonBody()?.cached, true);
+
+      const workspaceAfterRetryRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceAfterRetryRes.statusCode, 200);
+      assert.equal(workspaceAfterRetryRes.jsonBody()?.share?.permissions?.has_initial_ai_review, true);
+      assert.equal(workspaceAfterRetryRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, true);
+      assert.equal(workspaceAfterRetryRes.jsonBody()?.share?.permissions?.extra_ai_review_used, false);
+    } finally {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+    }
+  });
+
   test('Recipient can still run the first AI review and send back when extra AI review is disabled, and send-back does not create an additional review run', async () => {
     await ensureMigrated();
     await resetTables();
@@ -1211,60 +1387,73 @@ if (!hasDatabaseUrl()) {
       canSendBack: true,
       allowRecipientAiReview: false,
     });
-
-    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
-    assert.equal(workspaceRes.statusCode, 200);
-    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, true);
-    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
-    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
-    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.extra_ai_review_enabled, false);
-    assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_send_back, true);
-
-    const saveRes = await saveRecipientDraft(link.token, {
-      shared_payload: {
-        label: 'Shared Information',
-        text: 'Recipient response can still be drafted and sent even though extra AI review is disabled.',
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'proceed',
+        executive_summary: 'Recipient can send after a successful first AI mediation review.',
       },
-      recipient_confidential_payload: {
-        label: 'Confidential Information',
-        notes: 'Recipient confidential notes for a send-only response path.',
-      },
-      workflow_step: 2,
-    }, recipientCookie);
-    assert.equal(saveRes.statusCode, 200);
+      evaluation_provider: 'test',
+      similarity_score: 76,
+    });
 
-    const initialEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-    assert.equal(initialEvaluateRes.statusCode, 200);
+    try {
+      const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceRes.statusCode, 200);
+      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, true);
+      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
+      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
+      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.extra_ai_review_enabled, false);
+      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_send_back, true);
 
-    const postReviewWorkspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
-    assert.equal(postReviewWorkspaceRes.statusCode, 200);
-    assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, false);
-    assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.has_initial_ai_review, true);
-    assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
+      const saveRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient response can still be drafted and sent even though extra AI review is disabled.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential notes for a send-only response path.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(saveRes.statusCode, 200);
 
-    const sendBackRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
-    assert.equal(sendBackRes.statusCode, 200);
-    assert.equal(sendBackRes.jsonBody()?.status, 'sent');
+      const initialEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(initialEvaluateRes.statusCode, 200);
 
-    const db = getDb();
-    const reviewRunRows = await db.execute(sql`
-      select id, status
-      from shared_report_evaluation_runs
-      where shared_link_id = (select id from shared_links where token = ${link.token})
-      order by created_at asc
-    `);
-    assert.equal(reviewRunRows.rows.length, 1);
-    assert.equal(String(reviewRunRows.rows[0]?.status || ''), 'success');
+      const postReviewWorkspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(postReviewWorkspaceRes.statusCode, 200);
+      assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, false);
+      assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.has_initial_ai_review, true);
+      assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
 
-    const sentRevisionRows = await db.execute(sql`
-      select status
-      from shared_report_recipient_revisions
-      where shared_link_id = (select id from shared_links where token = ${link.token})
-      order by created_at desc
-      limit 1
-    `);
-    assert.equal(sentRevisionRows.rows.length, 1);
-    assert.equal(String(sentRevisionRows.rows[0]?.status || ''), 'sent');
+      const sendBackRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(sendBackRes.statusCode, 200);
+      assert.equal(sendBackRes.jsonBody()?.status, 'sent');
+
+      const db = getDb();
+      const reviewRunRows = await db.execute(sql`
+        select id, status
+        from shared_report_evaluation_runs
+        where shared_link_id = (select id from shared_links where token = ${link.token})
+        order by created_at asc
+      `);
+      assert.equal(reviewRunRows.rows.length, 1);
+      assert.equal(String(reviewRunRows.rows[0]?.status || ''), 'success');
+
+      const sentRevisionRows = await db.execute(sql`
+        select status
+        from shared_report_recipient_revisions
+        where shared_link_id = (select id from shared_links where token = ${link.token})
+        order by created_at desc
+        limit 1
+      `);
+      assert.equal(sentRevisionRows.rows.length, 1);
+      assert.equal(String(sentRevisionRows.rows[0]?.status || ''), 'sent');
+    } finally {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+    }
   });
 
   test('Non-owner cannot toggle recipient AI review access', async () => {

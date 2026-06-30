@@ -469,7 +469,7 @@ function getRecipientReviewUiCopy(mode = INITIAL_AI_REVIEW_MODE) {
       : 'Unable to run AI mediation.',
     generationFailureMessage: isExtraReview
       ? 'The extra AI review could not be completed. No substantive mediation result was produced. Please retry.'
-      : 'The AI mediation review could not be completed. No substantive mediation result was produced. Please retry.',
+      : 'AI mediation could not be completed. No substantive mediation result was produced. Please retry.',
     verifyMessage: isExtraReview
       ? 'Verify access before running the extra AI review.'
       : 'Verify access before running AI mediation.',
@@ -2852,6 +2852,11 @@ export default function SharedReport() {
         latestEvaluation?.result_json?.error?.message ||
         latestEvaluation?.result?.error?.message,
     ) || 'AI mediation could not be completed. Please retry.';
+  const step3ReviewPackageFailureMessage = step3IsEvaluationFailed
+    ? isGenerationFailureFallback(updatedRecipientReport)
+      ? nextRecipientReviewUiCopy.generationFailureMessage
+      : step3EvaluationFailureMessage || nextRecipientReviewUiCopy.failureToast
+    : '';
   const step3ExtraAiReviewNotice =
     hasSuccessfulRecipientReview && !canRunRecipientExtraAiReview
       ? recipientExtraAiReviewUsed
@@ -3552,11 +3557,7 @@ export default function SharedReport() {
               finishStage={step3IsEvaluationRunning ? 'evaluating' : 'idle'}
               exceedsAnySizeLimit={false}
               saveDraftPending={saveDraftMutation.isPending}
-              evaluationFailureMessage={
-                isGenerationFailureFallback(updatedRecipientReport)
-                  ? nextRecipientReviewUiCopy.generationFailureMessage
-                  : ''
-              }
+              evaluationFailureMessage={step3ReviewPackageFailureMessage}
               onBack={() => setStep(2)}
               onRunEvaluation={runEvaluationFromReview}
               actionSlot={renderRecipientStep3ActionBar()}

@@ -4013,6 +4013,12 @@ export function buildRecipientSafeEvaluationProjection(params: {
     sections: sanitizeLegacySections(sourceReport.sections, markers),
     provider: scrubString(sourceReport.provider || evaluation.provider, markers, 'projection'),
     model: scrubString(sourceReport.model || evaluation.model, markers, 'recipient-safe'),
+    ...(scrubString(sourceReport.generation_status, markers, '') === 'failed'
+      ? {
+          generation_status: 'failed',
+          retry_recommended: true,
+        }
+      : {}),
   } as Record<string, any>;
 
   const projectedReport = redactConfidentialStrings(safeReport, markers);

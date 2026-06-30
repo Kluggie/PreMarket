@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { mapEvaluationRunView } from '../../server/routes/shared-report/_shared.ts';
+import {
+  isSubstantiveRecipientAiReviewReport,
+  mapEvaluationRunView,
+} from '../../server/routes/shared-report/_shared.ts';
 
 const SHARED_REPORT_PATH = path.resolve(
   process.cwd(),
@@ -195,8 +198,8 @@ test('recipient extra AI review warns about owner credits and surfaces disabled 
     ),
     'SharedReport must surface the per-round recipient re-review cap copy',
   );
-  assert.ok(routeSource.includes('Cache hit = exact same inputs already have a saved successful AI result'));
-  assert.ok(routeSource.includes('Cache miss = inputs changed or no saved result exists'));
+  assert.ok(routeSource.includes('Cache hit = exact same inputs already have a saved successful substantive'));
+  assert.ok(routeSource.includes('Cache miss = inputs changed or no saved substantive result exists'));
 });
 
 test('recipient Run AI Mediation client calls shared-report evaluate with POST', async () => {
@@ -339,7 +342,27 @@ test('generation-service fallback returns to the existing retry screen instead o
   assert.ok(source.includes('isGenerationFailureFallback'));
   assert.ok(source.includes('setShowStep3Results(!generationFailed)'));
   assert.ok(source.includes('AI mediation could not be completed. Please retry.'));
-  assert.ok(source.includes('The AI mediation review could not be completed. No substantive mediation result was produced. Please retry.'));
+  assert.ok(source.includes('AI mediation could not be completed. No substantive mediation result was produced. Please retry.'));
+  assert.ok(source.includes('The extra AI review could not be completed. No substantive mediation result was produced. Please retry.'));
+});
+
+test('recipient review state only advances on substantive reports', () => {
+  assert.equal(
+    isSubstantiveRecipientAiReviewReport({
+      recommendation: 'proceed',
+      executive_summary: 'Substantive report',
+    }),
+    true,
+  );
+  assert.equal(
+    isSubstantiveRecipientAiReviewReport({
+      narrative_valid: false,
+      generation_status: 'failed',
+      retry_recommended: true,
+    }),
+    false,
+  );
+  assert.equal(isSubstantiveRecipientAiReviewReport({}), false);
 });
 
 test('recipient workspace strips internal evaluation diagnostics from the public run view', () => {

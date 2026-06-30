@@ -63,6 +63,7 @@ import {
   getPayloadText,
   getRecipientAiReviewStateForRound,
   getToken,
+  isSubstantiveRecipientAiReviewReport,
   logTokenEvent,
   mapRecipientSafeEvaluationDiagnostics,
   requireRecipientAuthorization,
@@ -668,9 +669,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       sharedText,
       confidentialText: confidentialBundle,
     });
-    // Cache hit = exact same inputs already have a saved successful AI result,
-    // so there is no model call and no owner review-credit usage.
-    const [duplicateRun] = await resolved.db
+    // Cache hit = exact same inputs already have a saved successful substantive
+    // AI result, so there is no model call and no owner review-credit usage.
+    const duplicateRuns = await resolved.db
       .select()
       .from(schema.sharedReportEvaluationRuns)
       .where(
@@ -681,7 +682,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ),
       )
       .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
-      .limit(1);
+      .limit(5);
+    const duplicateRun =
+      duplicateRuns.find((row: any) =>
+        isSubstantiveRecipientAiReviewReport(row?.resultPublicReport),
+      ) || null;
 
     if (duplicateRun) {
       const duplicateResultJson = toObject(duplicateRun.resultJson);
@@ -733,8 +738,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       );
     }
 
-    // Cache miss = inputs changed or no saved result exists. Before any model
-    // call or owner review-credit reservation, enforce the per-round policy:
+    // Cache miss = inputs changed or no saved substantive result exists.
+    // Before any model call or owner review-credit reservation, enforce the
+    // per-round policy:
     // 1) the first recipient review is always allowed,
     // 2) an additional review is only allowed after the first successful result,
     // 3) the owner toggle only governs that one additional review.
@@ -743,7 +749,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       outgoingRoundNumber,
     });
 
-    if (reviewState.nonCachedRunCount > 0 && !reviewState.hasInitialAiReview) {
+    if (reviewState.pendingRunCount > 0) {
       throw new ApiError(
         409,
         'evaluation_already_running',

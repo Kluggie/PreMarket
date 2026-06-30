@@ -284,6 +284,10 @@ async function countOwnerAiMediationReviewsThisMonth(
         eq(schema.sharedLinks.userId, params.userId),
         eq(schema.sharedReportEvaluationRuns.actorRole, 'recipient'),
         eq(schema.sharedReportEvaluationRuns.status, 'success'),
+        sql`not (
+          coalesce(lower(${schema.sharedReportEvaluationRuns.resultJson}->'evaluation_result'->'report'->>'generation_status'), '') = 'failed'
+          and coalesce(nullif(${schema.sharedReportEvaluationRuns.resultJson}->'evaluation_result'->'report'->>'retry_recommended', '')::boolean, true)
+        )`,
         gte(schema.sharedReportEvaluationRuns.createdAt, params.start),
         lt(schema.sharedReportEvaluationRuns.createdAt, params.end),
       ),
@@ -504,6 +508,10 @@ export async function reserveAiMediationReviewCredit(
           where links.user_id = ${params.userId}
             and runs.actor_role = 'recipient'
             and runs.status = 'success'
+            and not (
+              coalesce(lower(runs.result_json->'evaluation_result'->'report'->>'generation_status'), '') = 'failed'
+              and coalesce(nullif(runs.result_json->'evaluation_result'->'report'->>'retry_recommended', '')::boolean, true)
+            )
             and runs.created_at >= ${start}
             and runs.created_at < ${end}
         ) + (
