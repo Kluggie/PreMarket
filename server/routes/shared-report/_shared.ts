@@ -594,10 +594,16 @@ export async function getRecipientAiReviewStateForRound(
   // Shared-report send-back creates a new link token per bilateral round, so
   // the current link already scopes evaluation runs to the active round. Using
   // the persisted link id is more reliable than re-parsing `result_json`.
+  // Additionally filter by exchange_round for defensive scoping verification.
+  const linkMetadata = toObject(params.link.reportMetadata);
+  const linkExchangeRound = Number(linkMetadata?.exchange_round || 0);
   const linkRunWhereClause = and(
     eq(schema.sharedReportEvaluationRuns.sharedLinkId, params.link.id),
     eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
     inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
+    Number.isFinite(linkExchangeRound) && linkExchangeRound > 0
+      ? sql`${schema.sharedReportEvaluationRuns.resultJson}->>'exchange_round' = ${String(linkExchangeRound)}`
+      : sql`true`,
   );
 
   const runRows = await db
