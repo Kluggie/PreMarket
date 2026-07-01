@@ -7,6 +7,11 @@ import { PRIVATE_SENDER_LABEL } from '../../_lib/private-mode.js';
 import { clientIpForRateLimit } from '../../_lib/security.js';
 import { getRecipientAiReviewEnabled } from '../../_lib/shared-link-review-permissions.js';
 import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
+import {
+  htmlToEditorText,
+  sanitizeEditorHtml,
+  sanitizeEditorText,
+} from '../../_lib/document-editor-sanitization.js';
 
 export const SHARED_REPORT_ROUTE = '/api/shared-report/[token]';
 export const RECIPIENT_ROLE = 'recipient';
@@ -293,6 +298,10 @@ export function buildShareViewWithReviewState(
     hasInitialAiReview?: boolean;
     extraAiReviewEnabled?: boolean;
     extraAiReviewUsed?: boolean;
+    hasCurrentAiReview?: boolean;
+    hasStaleAiReview?: boolean;
+    staleReviewEvaluationId?: string | null;
+    currentReviewEvaluationId?: string | null;
   } = {},
 ) {
   const invitedEmail = normalizeEmail(link.recipientEmail) || null;
@@ -324,6 +333,10 @@ export function buildShareViewWithReviewState(
       can_run_initial_ai_review: Boolean(reviewState.canRunInitialAiReview),
       can_run_extra_ai_review: Boolean(reviewState.canRunExtraAiReview),
       has_initial_ai_review: Boolean(reviewState.hasInitialAiReview),
+      has_current_ai_review: Boolean(reviewState.hasCurrentAiReview),
+      has_stale_ai_review: Boolean(reviewState.hasStaleAiReview),
+      stale_review_evaluation_id: reviewState.staleReviewEvaluationId || null,
+      current_review_evaluation_id: reviewState.currentReviewEvaluationId || null,
       extra_ai_review_enabled: extraAiReviewEnabled,
       extra_ai_review_used: Boolean(reviewState.extraAiReviewUsed),
       can_send_back: Boolean(link.canSendBack),
@@ -747,6 +760,196 @@ function stableSort(value: unknown): unknown {
 
 export function stableJsonEquals(left: unknown, right: unknown) {
   return JSON.stringify(stableSort(left ?? {})) === JSON.stringify(stableSort(right ?? {}));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AI Review Freshness Tracking
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Computes a stable hash of shared and confidential text to detect if draft has changed.
+ * Uses SHA256 so we can deterministically detect content changes.
+ */
+export function computeDraftContentHash(params: {
+  sharedText: string;
+  confidentialText: string;
+}): string {
+  const combined = JSON.stringify({
+    shared: asText(params.sharedText || ''),
+    confidential: asText(params.confidentialText || ''),
+  });
+  return createHash('sha256').update(combined).digest('hex');
+}
+
+/**
+ * Extracts the text content from a payload for hashing.
+ * Handles both text and html formats.
+ */
+export function extractPayloadText(payload: unknown, fallback = ''): string {
+  const source = toObject(payload);
+  const text = asText(source.text);
+  if (text) {
+    return text;
+  }
+  const html = asText(source.html);
+  if (html) {
+    // Simplified: just use HTML as-is for now. In production, would convert to text.
+    return html;
+  }
+  return asText(fallback);
+}
+
+/**
+ * Coerce payload to HTML, applying sanitization.
+ * Used to ensure consistent text extraction during hashing.
+ */
+function coercePayloadHtml(payload: unknown, fallbackText = ''): string {
+  const source = toObject(payload);
+  const html = asText(source.html);
+  if (html) {
+    return sanitizeEditorHtml(html);
+  }
+  const text = getPayloadText(payload, fallbackText);
+  return sanitizeEditorHtml(text);
+}
+
+/**
+ * Coerce payload to text with sanitization applied.
+ * Must match evaluate.ts implementation to ensure consistent hash computation.
+ * This is the authoritative text extraction function for content hashing.
+ */
+export function coercePayloadText(payload: unknown, fallbackText = ''): string {
+  const text = getPayloadText(payload, fallbackText);
+  if (text) {
+    return sanitizeEditorText(text);
+  }
+  const html = coercePayloadHtml(payload, fallbackText);
+  return sanitizeEditorText(htmlToEditorText(html));
+}
+
+/**
+ * Represents the freshness state of an AI review relative to the current draft.
+ */
+export interface AiReviewFreshnessState {
+  /** True if there is at least one successful substantive AI review */
+  hasAnyReview: boolean;
+  /** True if the most recent review is current (content matches draft) */
+  hasCurrentReview: boolean;
+  /** True if a review exists but is stale (content doesn't match) */
+  hasStaleReview: boolean;
+  /** The revision ID of the most recent successful review */
+  latestReviewRevisionId: string | null;
+  /** The evaluation run ID of the current (fresh) review, if any */
+  currentReviewEvaluationId: string | null;
+  /** The evaluation run ID of the stale review, if any */
+  staleReviewEvaluationId: string | null;
+  /** Whether extra AI review is enabled for this link */
+  extraReviewEnabled: boolean;
+  /** Whether an extra review has been used */
+  extraReviewUsed: boolean;
+  /** Whether another extra review can be run */
+  canRunExtraReview: boolean;
+}
+
+/**
+ * Determines freshness of AI reviews for a given draft.
+ * 
+ * A review is "current" if:
+ * - It completed successfully
+ * - It's substantive (not a failure fallback)
+ * - Its stored content hash matches the current draft's content
+ * 
+ * A review is "stale" if it exists but doesn't match the current draft.
+ */
+export async function getAiReviewFreshnessForDraft(
+  db: any,
+  params: {
+    link: any;
+    currentDraft: any;
+  },
+): Promise<AiReviewFreshnessState> {
+  const { link, currentDraft } = params;
+  const extraReviewEnabled = getRecipientAiReviewEnabled(link);
+
+  if (!currentDraft) {
+    return {
+      hasAnyReview: false,
+      hasCurrentReview: false,
+      hasStaleReview: false,
+      latestReviewRevisionId: null,
+      currentReviewEvaluationId: null,
+      staleReviewEvaluationId: null,
+      extraReviewEnabled,
+      extraReviewUsed: false,
+      canRunExtraReview: false,
+    };
+  }
+
+  // Compute hash of current draft content
+  const currentSharedText = coercePayloadText(currentDraft.sharedPayload, '');
+  const currentConfidentialText = coercePayloadText(currentDraft.recipientConfidentialPayload, '');
+  const currentContentHash = computeDraftContentHash({
+    sharedText: currentSharedText,
+    confidentialText: currentConfidentialText,
+  });
+
+  // Get all successful evaluations for this link
+  const successfulRuns = await db
+    .select()
+    .from(schema.sharedReportEvaluationRuns)
+    .where(
+      and(
+        eq(schema.sharedReportEvaluationRuns.sharedLinkId, link.id),
+        eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+        eq(schema.sharedReportEvaluationRuns.status, 'success'),
+      ),
+    )
+    .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt));
+
+  // Filter to only substantive reviews (not fallbacks)
+  const substantiveRuns = successfulRuns.filter((row: any) =>
+    isSubstantiveRecipientAiReviewReport(row?.resultPublicReport),
+  );
+
+  if (substantiveRuns.length === 0) {
+    return {
+      hasAnyReview: false,
+      hasCurrentReview: false,
+      hasStaleReview: false,
+      latestReviewRevisionId: null,
+      currentReviewEvaluationId: null,
+      staleReviewEvaluationId: null,
+      extraReviewEnabled,
+      extraReviewUsed: false,
+      canRunExtraReview: false,
+    };
+  }
+
+  const latestRun = substantiveRuns[0];
+  const latestResultJson = toObject(latestRun?.resultJson);
+  const storedContentHash = asText(latestResultJson?.draft_content_hash);
+  const isCurrentReview = storedContentHash && storedContentHash === currentContentHash;
+
+  // Count successful substantive reviews to determine if extra review was used
+  const extraReviewUsed = substantiveRuns.length >= 2;
+
+  // Can run extra review if: initial review exists, extra is enabled, extra not used, and no pending
+  const pendingRuns = successfulRuns.filter((row: any) =>
+    asText(row?.status).toLowerCase() === 'pending',
+  );
+  const canRunExtraReview = isCurrentReview && extraReviewEnabled && !extraReviewUsed && pendingRuns.length === 0;
+
+  return {
+    hasAnyReview: substantiveRuns.length > 0,
+    hasCurrentReview: isCurrentReview,
+    hasStaleReview: !isCurrentReview && substantiveRuns.length > 0,
+    latestReviewRevisionId: asText(latestRun?.revisionId) || null,
+    currentReviewEvaluationId: isCurrentReview ? latestRun?.id : null,
+    staleReviewEvaluationId: !isCurrentReview && substantiveRuns.length > 0 ? latestRun?.id : null,
+    extraReviewEnabled,
+    extraReviewUsed,
+    canRunExtraReview,
+  };
 }
 
 function hashRateLimitKey(input: string) {

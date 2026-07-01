@@ -85,6 +85,11 @@ import {
   getContextualPartyLabel,
   getRecipientAiReviewActionLabel,
   getSharedReportSendActionLabel,
+  getRecipientAiReviewState,
+  getRecipientPrimaryActionButton,
+  getRecipientSecondaryActionButton,
+  getRecipientReviewHelperCopy,
+  STALE_AI_REVIEW_WARNING,
 } from '@/lib/sharedReportSendDirection';
 import {
   buildSharedReportStatusBanner,
@@ -671,11 +676,28 @@ export default function SharedReport() {
 
   const share = workspaceQuery.data?.share || null;
   const sharePermissions = share?.permissions || {};
-  const hasSuccessfulRecipientReview = Boolean(sharePermissions?.has_initial_ai_review);
+  // Freshness-aware logic for recipient AI reviews
+  const hasCurrentRecipientReview = Boolean(sharePermissions?.has_current_ai_review);
+  const hasStaleRecipientReview = Boolean(sharePermissions?.has_stale_ai_review);
+  const hasAnyRecipientReview = Boolean(sharePermissions?.has_initial_ai_review);
+  // Fallback to old field for backward compat with views that haven't updated yet
+  const hasSuccessfulRecipientReview = hasCurrentRecipientReview || (hasAnyRecipientReview && !hasStaleRecipientReview);
   const canRunInitialRecipientAiReview = Boolean(sharePermissions?.can_run_initial_ai_review);
   const canRunRecipientExtraAiReview = Boolean(sharePermissions?.can_run_extra_ai_review);
   const recipientExtraAiReviewEnabled = Boolean(sharePermissions?.extra_ai_review_enabled);
   const recipientExtraAiReviewUsed = Boolean(sharePermissions?.extra_ai_review_used);
+  
+  // Determine review state for UI purposes
+  const recipientReviewState = (() => {
+    if (hasCurrentRecipientReview) return 'CURRENT_REVIEW';
+    if (hasStaleRecipientReview) {
+      if (recipientExtraAiReviewUsed) return 'STALE_REVIEW_EXTRA_USED';
+      if (canRunRecipientExtraAiReview) return 'STALE_REVIEW_EXTRA_ENABLED';
+      return 'STALE_REVIEW_EXTRA_DISABLED';
+    }
+    return 'NO_REVIEW';
+  })();
+  
   const nextRecipientReviewMode = hasSuccessfulRecipientReview
     ? EXTRA_AI_REVIEW_MODE
     : INITIAL_AI_REVIEW_MODE;
@@ -683,10 +705,12 @@ export default function SharedReport() {
   const canRunRecipientAiReview = nextRecipientReviewMode === EXTRA_AI_REVIEW_MODE
     ? canRunRecipientExtraAiReview
     : canRunInitialRecipientAiReview;
-  const showInitialRecipientReviewAction =
-    !hasSuccessfulRecipientReview && canRunInitialRecipientAiReview;
+  
+  // Show actions based on review state
+  const showInitialRecipientReviewAction = 
+    recipientReviewState === 'NO_REVIEW' && canRunInitialRecipientAiReview;
   const showRecipientExtraReviewAction =
-    hasSuccessfulRecipientReview && canRunRecipientExtraAiReview;
+    recipientReviewState === 'STALE_REVIEW_EXTRA_ENABLED';
   const parent = workspaceQuery.data?.parent || null;
   const hasCanonicalParentStatus = Boolean(asText(parent?.primary_status_key));
   const parentThreadState = useMemo(
@@ -798,7 +822,8 @@ export default function SharedReport() {
     Boolean(isAuthenticated && invitedEmail) && !authorizedForCurrentUser;
 
   const canSendBack = Boolean(share?.permissions?.can_send_back);
-  const showRecipientSendAction = hasSuccessfulRecipientReview && canSendBack;
+  // Allow sending in all states except when stale review + extra is enabled (in that case, should run extra first)
+  const showRecipientSendAction = canSendBack && recipientReviewState !== 'STALE_REVIEW_EXTRA_ENABLED';
   const canUpdateOutcomeFromStep0 = Boolean(
     isAuthenticated &&
     asText(parent?.proposal_id) &&
@@ -2898,76 +2923,101 @@ export default function SharedReport() {
     latestEvaluationTimestamp: latestEvaluation?.created_at || latestEvaluation?.updated_at,
     formatDateTime,
   });
-  const renderRecipientStep3ActionBar = ({ includeEditAgain = false } = {}) => (
-    <div className="ml-auto flex max-w-full flex-col items-end gap-2">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {showInitialRecipientReviewAction ? (
-          <Button
-            type="button"
-            onClick={runEvaluationFromReview}
-            disabled={recipientReviewActionDisabled}
-            data-testid="step3-run-ai-review-button"
-          >
-            {step3IsEvaluationRunning
-              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              : <Sparkles className="w-4 h-4 mr-2" />}
-            {getRecipientAiReviewActionLabel({
-              isPending: step3IsEvaluationRunning,
-              isExtraReview: false,
-            })}
-          </Button>
+  const renderRecipientStep3ActionBar = ({ includeEditAgain = false } = {}) => {
+    const reviewHelperCopy = getRecipientReviewHelperCopy({
+      hasCurrentReview: hasCurrentRecipientReview,
+      hasStaleReview: hasStaleRecipientReview,
+      canRunExtraReview: canRunRecipientExtraAiReview,
+      extraReviewUsed: recipientExtraAiReviewUsed,
+      extraReviewEnabled: recipientExtraAiReviewEnabled,
+    });
+    
+    return (
+      <div className="ml-auto flex max-w-full flex-col items-end gap-2">
+        {/* Stale review warning and helper text */}
+        {reviewHelperCopy?.warning ? (
+          <Alert className="bg-amber-50 border-amber-200">
+            <AlertTriangle className="h-4 w-4 text-amber-700" />
+            <AlertDescription className="text-amber-800 text-sm">
+              {reviewHelperCopy.warning}
+            </AlertDescription>
+          </Alert>
         ) : null}
-        {showRecipientExtraReviewAction ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={runEvaluationFromReview}
-            disabled={recipientReviewActionDisabled}
-            data-testid="step3-run-ai-review-button"
-          >
-            {step3IsEvaluationRunning
-              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              : <Sparkles className="w-4 h-4 mr-2" />}
-            {getRecipientAiReviewActionLabel({
-              isPending: step3IsEvaluationRunning,
-              isExtraReview: true,
-            })}
-          </Button>
+        {reviewHelperCopy?.helper ? (
+          <p className="max-w-md text-right text-xs text-slate-600">
+            {reviewHelperCopy.helper}
+          </p>
         ) : null}
-        {showRecipientSendAction ? (
-          <Button
-            type="button"
-            onClick={sendToCounterparty}
-            disabled={recipientSendActionDisabled}
-          >
-            {sendBackMutation.isPending
-              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              : <Send className="w-4 h-4 mr-2" />}
-            {getSharedReportSendActionLabel(draftDocumentOwner, {
-              isSent: isSentToCounterparty,
-              isPending: sendBackMutation.isPending,
-              counterpartyName: counterpartyDisplayName,
-            })}
-          </Button>
-        ) : null}
-        {includeEditAgain ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => { setShowStep3Results(false); setStep(2); }}
-            disabled={requiresRecipientVerification}
-          >
-            Edit again
-          </Button>
+        
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {showInitialRecipientReviewAction ? (
+            <Button
+              type="button"
+              onClick={runEvaluationFromReview}
+              disabled={recipientReviewActionDisabled}
+              data-testid="step3-run-ai-review-button"
+            >
+              {step3IsEvaluationRunning
+                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                : <Sparkles className="w-4 h-4 mr-2" />}
+              {getRecipientAiReviewActionLabel({
+                isPending: step3IsEvaluationRunning,
+                isExtraReview: false,
+              })}
+            </Button>
+          ) : null}
+          {showRecipientExtraReviewAction ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={runEvaluationFromReview}
+              disabled={recipientReviewActionDisabled}
+              data-testid="step3-run-ai-review-button"
+            >
+              {step3IsEvaluationRunning
+                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                : <Sparkles className="w-4 h-4 mr-2" />}
+              {getRecipientAiReviewActionLabel({
+                isPending: step3IsEvaluationRunning,
+                isExtraReview: true,
+              })}
+            </Button>
+          ) : null}
+          {showRecipientSendAction ? (
+            <Button
+              type="button"
+              onClick={sendToCounterparty}
+              disabled={recipientSendActionDisabled}
+            >
+              {sendBackMutation.isPending
+                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                : <Send className="w-4 h-4 mr-2" />}
+              {getSharedReportSendActionLabel(draftDocumentOwner, {
+                isSent: isSentToCounterparty,
+                isPending: sendBackMutation.isPending,
+                counterpartyName: counterpartyDisplayName,
+              })}
+            </Button>
+          ) : null}
+          {includeEditAgain ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => { setShowStep3Results(false); setStep(2); }}
+              disabled={requiresRecipientVerification}
+            >
+              Edit again
+            </Button>
+          ) : null}
+        </div>
+        {step3ExtraAiReviewNotice ? (
+          <p className="max-w-md text-right text-xs text-amber-700">
+            {step3ExtraAiReviewNotice}
+          </p>
         ) : null}
       </div>
-      {step3ExtraAiReviewNotice ? (
-        <p className="max-w-md text-right text-xs text-amber-700">
-          {step3ExtraAiReviewNotice}
-        </p>
-      ) : null}
-    </div>
-  );
+    );
+  };
   const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
   const activeCoachHash = coachResultHash || 'unhashed';
   const appliedSuggestionIds = appliedSuggestionIdsByHash[activeCoachHash] || [];

@@ -43,6 +43,8 @@ import {
   buildLatestReport,
   buildParentView,
   buildShareViewWithReviewState,
+  computeDraftContentHash,
+  extractPayloadText,
   getCurrentRecipientDraft,
   getPayloadText,
   getRecipientAiReviewStateForRound,
@@ -53,6 +55,7 @@ import {
   mapEvaluationRunView,
   mapDraftView,
   getRecipientAuthorizationState,
+  getAiReviewFreshnessForDraft,
   resolveSharedReportToken,
   toObject,
 } from './_shared.js';
@@ -353,6 +356,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     ]);
     const currentUserId = asText(currentUser?.id || currentUser?.sub);
     const proposalOwnerUserId = asText(resolved.proposal?.userId);
+
+    // Compute AI review freshness state
+    const recipientAiReviewFreshness = await getAiReviewFreshnessForDraft(resolved.db, {
+      link: resolved.link,
+      currentDraft,
+    });
+
     const activityAccessMode =
       currentUserId && proposalOwnerUserId
         ? currentUserId === proposalOwnerUserId
@@ -454,7 +464,14 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           outcome: parentOutcome,
         })
       : null;
-    const shareView: any = buildShareViewWithReviewState(resolved.link, recipientAiReviewState);
+    const shareView: any = buildShareViewWithReviewState(resolved.link, {
+      ...recipientAiReviewState,
+      hasCurrentAiReview: recipientAiReviewFreshness.hasCurrentReview,
+      hasStaleAiReview: recipientAiReviewFreshness.hasStaleReview,
+      canRunExtraAiReview: recipientAiReviewFreshness.canRunExtraReview,
+      staleReviewEvaluationId: recipientAiReviewFreshness.staleReviewEvaluationId,
+      currentReviewEvaluationId: recipientAiReviewFreshness.currentReviewEvaluationId,
+    });
     const isAuthenticated = Boolean(currentUser);
     const canViewAuthorizationDetails = Boolean(isAuthenticated && recipientAuthorization.aliasVerifiedMatch);
 

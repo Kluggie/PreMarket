@@ -3657,4 +3657,207 @@ if (!hasDatabaseUrl()) {
       }
     }
   });
+
+  test('Recipient AI review freshness: First review has current_review state', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'freshness_first_review';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'First Review Test',
+      docAText: 'Owner text',
+      docBText: 'Recipient text',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+      allowRecipientAiReview: true,
+    });
+
+    await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared', text: 'Test content' },
+      recipient_confidential_payload: { label: 'Confidential', notes: 'Test notes' },
+      workflow_step: 2,
+    }, recipientCookie);
+
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'review',
+        executive_summary: 'Test review',
+        sections: [{ heading: 'Summary', bullets: ['Test bullet'] }],
+      },
+      evaluation_provider: 'test',
+      similarity_score: 70,
+    });
+
+    const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(evaluateRes.statusCode, 200);
+
+    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+    const permissions = workspaceRes.jsonBody()?.share?.permissions || {};
+    assert.equal(permissions.has_current_ai_review, true, 'Should have current review after evaluation');
+  });
+
+  test('Recipient AI review freshness: Editing draft after review creates stale state', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'freshness_stale_after_edit';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Stale After Edit Test',
+      docAText: 'Owner text',
+      docBText: 'Recipient text',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+      allowRecipientAiReview: true,
+    });
+
+    await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared', text: 'Original content' },
+      recipient_confidential_payload: { label: 'Confidential', notes: 'Original notes' },
+      workflow_step: 2,
+    }, recipientCookie);
+
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'review',
+        executive_summary: 'Test review',
+        sections: [{ heading: 'Summary', bullets: ['Test bullet'] }],
+      },
+      evaluation_provider: 'test',
+      similarity_score: 70,
+    });
+
+    await evaluateRecipientDraft(link.token, {}, recipientCookie);
+
+    // Edit draft to create stale state
+    await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared', text: 'EDITED content' },
+      recipient_confidential_payload: { label: 'Confidential', notes: 'Original notes' },
+      workflow_step: 2,
+    }, recipientCookie);
+
+    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+    const permissions = workspaceRes.jsonBody()?.share?.permissions || {};
+    assert.equal(permissions.has_stale_ai_review, true, 'Edit should create stale state');
+  });
+
+  test('Recipient AI review freshness: Send-back with current review includes evaluation', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'freshness_send_current';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Send Current Test',
+      docAText: 'Owner text',
+      docBText: 'Recipient text',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+      allowRecipientAiReview: true,
+    });
+
+    await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared', text: 'Test content' },
+      recipient_confidential_payload: { label: 'Confidential', notes: 'Test notes' },
+      workflow_step: 2,
+    }, recipientCookie);
+
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'review',
+        executive_summary: 'Test review',
+        sections: [{ heading: 'Summary', bullets: ['Test bullet'] }],
+      },
+      evaluation_provider: 'test',
+      similarity_score: 70,
+    });
+
+    const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(evaluateRes.statusCode, 200);
+
+    const sendRes = await sendBackRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared', text: 'Test content' },
+      recipient_confidential_payload: { label: 'Confidential', notes: 'Test notes' },
+    }, recipientCookie);
+    assert.equal(sendRes.statusCode, 200);
+
+    const body = sendRes.jsonBody();
+    const reportResult = body?.comparison?.evaluation_result?.report || body?.public_report;
+    assert.ok(reportResult, 'Current evaluation should be in response');
+  });
+
+  test('Recipient AI review freshness: Extra review creates new current state', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'freshness_extra_review';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Extra Review Test',
+      docAText: 'Owner text',
+      docBText: 'Recipient text',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      allowRecipientAiReview: true,
+    });
+
+    await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared', text: 'Content' },
+      recipient_confidential_payload: { label: 'Confidential', notes: 'Notes' },
+      workflow_step: 2,
+    }, recipientCookie);
+
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'review',
+        executive_summary: 'Test review',
+        sections: [{ heading: 'Summary', bullets: ['Test'] }],
+      },
+      evaluation_provider: 'test',
+      similarity_score: 70,
+    });
+
+    await evaluateRecipientDraft(link.token, {}, recipientCookie);
+
+    await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared', text: 'EDITED content' },
+      recipient_confidential_payload: { label: 'Confidential', notes: 'Initial' },
+      workflow_step: 2,
+    }, recipientCookie);
+
+    const extraEvalRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(extraEvalRes.statusCode, 200);
+
+    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+    const permissions = workspaceRes.jsonBody()?.share?.permissions || {};
+    assert.equal(permissions.has_current_ai_review, true, 'Extra review should be current');
+  });
 }

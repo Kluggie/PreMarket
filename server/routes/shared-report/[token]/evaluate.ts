@@ -59,6 +59,9 @@ import {
   assertPayloadSize,
   buildDefaultConfidentialPayload,
   buildDefaultSharedPayload,
+  computeDraftContentHash,
+  extractPayloadText,
+  coercePayloadText,
   getCurrentRecipientDraft,
   getPayloadText,
   getRecipientAiReviewStateForRound,
@@ -224,25 +227,6 @@ function toV2ApiError(error: any) {
     upstreamStatus: Number.isFinite(upstreamStatus) && upstreamStatus > 0 ? upstreamStatus : null,
     ...details,
   });
-}
-
-function coercePayloadHtml(payload: unknown, fallbackText = '') {
-  const source = toObject(payload);
-  const html = asText(source.html);
-  if (html) {
-    return sanitizeEditorHtml(html);
-  }
-  const text = getPayloadText(payload, fallbackText);
-  return sanitizeEditorHtml(text);
-}
-
-function coercePayloadText(payload: unknown, fallbackText = '') {
-  const text = getPayloadText(payload, fallbackText);
-  if (text) {
-    return sanitizeEditorText(text);
-  }
-  const html = coercePayloadHtml(payload, fallbackText);
-  return sanitizeEditorText(htmlToEditorText(html));
 }
 
 function buildConfidentialBundle(params: {
@@ -487,6 +471,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const sharedFallbackText = String(resolved.comparison?.docBText || defaultSharedPayload.text || '');
     const currentRoundSharedText = coercePayloadText(sharedPayload, sharedFallbackText);
     const currentRoundRecipientConfidentialText = coercePayloadText(confidentialPayload, '');
+    const draftContentHash = computeDraftContentHash({
+      sharedText: currentRoundSharedText,
+      confidentialText: currentRoundRecipientConfidentialText,
+    });
     const sharedDraftContribution = evaluateMeaningfulPayloadContribution({
       payload: sharedPayload,
       baselinePayload: defaultSharedPayload,
@@ -1041,6 +1029,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       if (Boolean(v2Preflight.trimTriggered)) {
         omittedDueToCapacity.push('prompt tightened during token preflight');
       }
+
+      // Compute content hash for freshness tracking
+      const draftContentHash = computeDraftContentHash({
+        sharedText: currentRoundSharedText,
+        confidentialText: currentRoundRecipientConfidentialText,
+      });
+
       const reviewContextEstimate = buildMediationContextEstimate({
         visibleSharedText: visibleSharedBundle.text || '',
         visibleConfidentialText: currentRoundRecipientConfidentialText,
@@ -1145,6 +1140,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               text: sharedText,
               html: sharedHtml,
             },
+            draft_content_hash: draftContentHash,
           },
           errorCode: null,
           errorMessage: null,
