@@ -597,14 +597,22 @@ export async function getRecipientAiReviewStateForRound(
   // Additionally filter by exchange_round for defensive scoping verification.
   const linkMetadata = toObject(params.link.reportMetadata);
   const linkExchangeRound = Number(linkMetadata?.exchange_round || 0);
-  const linkRunWhereClause = and(
+  
+  // Build WHERE conditions: always filter by link + role + status,
+  // and additionally filter by exchange_round if it's a valid positive number
+  const whereConditions: any[] = [
     eq(schema.sharedReportEvaluationRuns.sharedLinkId, params.link.id),
     eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
     inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
-    Number.isFinite(linkExchangeRound) && linkExchangeRound > 0
-      ? sql`${schema.sharedReportEvaluationRuns.resultJson}->>'exchange_round' = ${String(linkExchangeRound)}`
-      : sql`true`,
-  );
+  ];
+  
+  if (Number.isFinite(linkExchangeRound) && linkExchangeRound > 0) {
+    whereConditions.push(
+      sql`${schema.sharedReportEvaluationRuns.resultJson}->>'exchange_round' = ${String(linkExchangeRound)}`,
+    );
+  }
+  
+  const linkRunWhereClause = and(...whereConditions);
 
   const runRows = await db
     .select({
