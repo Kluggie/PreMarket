@@ -8,11 +8,6 @@ import { readJsonBody } from '../../_lib/http.js';
 import { newId, newToken } from '../../_lib/ids.js';
 import { appendProposalHistory } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
-import {
-  getRecipientAiReviewEnabled,
-  mergeRecipientAiReviewIntoReportMetadata,
-  readRecipientAiReviewEnabledFromBody,
-} from '../../_lib/shared-link-review-permissions.js';
 import { recordInitialSharedReportBaseline } from '../../_lib/shared-report-history.js';
 
 function asText(value: unknown) {
@@ -22,11 +17,6 @@ function asText(value: unknown) {
 function normalizeEmail(value: unknown) {
   const normalized = asText(value).toLowerCase();
   return normalized || '';
-}
-
-function normalizeDeliveryStatus(value: unknown) {
-  const normalized = asText(value).toLowerCase();
-  return normalized === 'sent' ? 'queued' : normalized || 'queued';
 }
 
 function buildSharedReportUrl(token: string) {
@@ -60,7 +50,7 @@ function mapDelivery(row: any) {
   if (!row) return null;
   return {
     id: row.id,
-    status: normalizeDeliveryStatus(row.status),
+    status: row.status,
     sent_to_email: row.sentToEmail,
     provider_message_id: row.providerMessageId || null,
     last_error: row.lastError || null,
@@ -87,7 +77,6 @@ function mapSharedReportLink(row: any, comparisonId: string | null, deliveries: 
     can_edit: Boolean(row.canEdit),
     can_edit_confidential: Boolean(row.canEditConfidential),
     can_reevaluate: Boolean(row.canReevaluate),
-    allow_recipient_ai_review: getRecipientAiReviewEnabled(row),
     can_send_back: Boolean(row.canSendBack),
     max_uses: row.maxUses,
     uses: row.uses,
@@ -255,7 +244,6 @@ export default async function handler(req: any, res: any) {
       body.canReevaluate === undefined && body.can_reevaluate === undefined
         ? false
         : Boolean(body.canReevaluate ?? body.can_reevaluate);
-    const allowRecipientAiReview = readRecipientAiReviewEnabledFromBody(body, false);
     const canSendBack =
       body.canSendBack === undefined && body.can_send_back === undefined
         ? true
@@ -289,10 +277,10 @@ export default async function handler(req: any, res: any) {
         lastUsedAt: null,
         expiresAt,
         idempotencyKey: null,
-        reportMetadata: mergeRecipientAiReviewIntoReportMetadata({
+        reportMetadata: {
           workflow: 'single_shared_report',
           comparison_id: comparison.id,
-        }, allowRecipientAiReview),
+        },
         createdAt: now,
         updatedAt: now,
       })

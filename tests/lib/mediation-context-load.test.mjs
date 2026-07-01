@@ -170,15 +170,4 @@ test('Step 3 UI distinguishes baseline proposal context from post-baseline histo
   assert.match(step3PackageSource, /Omitted due to capacity/);
 });
 
-test('shared-report workspace and evaluate routes expose equivalent context accounting fields', () => {
-  assert.match(sharedReportWorkspaceSource, /review_context_estimate/);
-  assert.match(sharedReportWorkspaceSource, /workspace_review_context_estimate/);
-  assert.match(sharedReportWorkspaceSource, /initialProposalContextIncluded/);
-  assert.match(sharedReportWorkspaceSource, /priorRoundsConsidered/);
-  assert.match(sharedReportWorkspaceSource, /previousReviewsConsidered/);
-  assert.match(sharedReportEvaluateSource, /context_estimate/);
-  assert.match(sharedReportEvaluateSource, /review_context_estimate/);
-  assert.match(sharedReportEvaluateSource, /initialProposalContextIncluded/);
-  assert.match(sharedReportEvaluateSource, /priorRoundsConsidered/);
-  assert.match(sharedReportEvaluateSource, /previousReviewsConsidered/);
-});
+

@@ -6,7 +6,6 @@ import documentComparisonDetailHandler from '../../server/routes/document-compar
 import documentComparisonEvaluateHandler from '../../server/routes/document-comparisons/[id]/evaluate.ts';
 import sharedLinksHandler from '../../server/routes/shared-links/index.ts';
 import sharedReportsHandler from '../../server/routes/shared-reports/index.ts';
-import sharedReportsTokenHandler from '../../server/routes/shared-reports/[token].ts';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import sharedReportRecipientTokenHandler from '../../server/routes/shared-report/[token].ts';
 import sharedReportRecipientDraftHandler from '../../server/routes/shared-report/[token]/draft.ts';
@@ -15,9 +14,7 @@ import sharedReportRecipientEvaluateHandler from '../../server/routes/shared-rep
 import sharedReportRecipientSendBackHandler from '../../server/routes/shared-report/[token]/send-back.ts';
 import sharedReportVerifyStartHandler from '../../server/routes/shared-report/[token]/verify/start.ts';
 import sharedReportVerifyConfirmHandler from '../../server/routes/shared-report/[token]/verify/confirm.ts';
-import { newId } from '../../server/_lib/ids.js';
 import { appendProposalHistory } from '../../server/_lib/proposal-history.js';
-import { recordSharedReportContributionGroup } from '../../server/_lib/shared-report-history.js';
 import { buildSharedReportTurnCopy } from '../../src/lib/sharedReportSendDirection.js';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
@@ -65,7 +62,6 @@ async function createSharedReportLink(cookie, comparisonId, recipientEmail, over
     body: {
       comparisonId,
       recipientEmail,
-      allowRecipientAiReview: true,
       ...overrides,
     },
   });
@@ -73,19 +69,6 @@ async function createSharedReportLink(cookie, comparisonId, recipientEmail, over
   await sharedReportsHandler(req, res);
   assert.equal(res.statusCode, 201);
   return res.jsonBody();
-}
-
-async function updateSharedReportLink(token, cookie, body = {}) {
-  const req = createMockReq({
-    method: 'PATCH',
-    url: `/api/sharedReports/${token}`,
-    query: { token },
-    headers: { cookie },
-    body,
-  });
-  const res = createMockRes();
-  await sharedReportsTokenHandler(req, res, token);
-  return res;
 }
 
 async function createWorkspaceLink(cookie, proposalId, recipientEmail, overrides = {}) {
@@ -956,7 +939,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('Prompt2 evaluate always allows the first recipient AI review and only gates the extra review', async () => {
+  test('Prompt2 evaluate requires auth and allows initial review even when can_reevaluate is disabled', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -971,23 +954,17 @@ if (!hasDatabaseUrl()) {
       canEdit: true,
       canEditConfidential: true,
       canReevaluate: false,
-      allowRecipientAiReview: false,
     });
     const disallowedRecipientCookie = makeRecipientCookie('p2_eval_disallowed', 'recipient@example.com');
 
     const disallowedWorkspaceRes = await getRecipientWorkspace(disallowed.token, disallowedRecipientCookie);
     assert.equal(disallowedWorkspaceRes.statusCode, 200);
     assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_reevaluate, false);
-    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, true);
-    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
-    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
-    assert.equal(disallowedWorkspaceRes.jsonBody()?.share?.permissions?.extra_ai_review_enabled, false);
 
     const allowed = await createSharedReportLink(ownerCookie, comparison.id, 'recipient2@example.com', {
       canEdit: true,
       canEditConfidential: true,
-      canReevaluate: false,
-      allowRecipientAiReview: true,
+      canReevaluate: true,
     });
     const allowedRecipientCookie = makeRecipientCookie('p2_eval_allowed', 'recipient2@example.com');
 
@@ -1020,24 +997,23 @@ if (!hasDatabaseUrl()) {
 
       const disallowedInitialEvaluateRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
       assert.equal(disallowedInitialEvaluateRes.statusCode, 200);
-      assert.equal(Boolean(disallowedInitialEvaluateRes.jsonBody()?.evaluation_id), true);
 
-      const changedDisallowedDraftRes = await saveRecipientDraft(disallowed.token, {
+      const saveDisallowedChangedDraftRes = await saveRecipientDraft(disallowed.token, {
         shared_payload: {
           label: 'Shared Information',
-          text: 'Recipient materially updates the same round after the first review and should now require the owner extra-review toggle.',
+          text: 'Recipient changed shared input attempts an additional same-round re-review and should be blocked when disabled.',
         },
         recipient_confidential_payload: {
           label: 'Confidential Information',
-          notes: 'Recipient confidential details change after the first review for extra-review gating.',
+          notes: 'Recipient confidential details updated alongside the changed shared input.',
         },
         workflow_step: 2,
       }, disallowedRecipientCookie);
-      assert.equal(changedDisallowedDraftRes.statusCode, 200);
+      assert.equal(saveDisallowedChangedDraftRes.statusCode, 200);
 
-      const disallowedExtraEvaluateRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
-      assert.equal(disallowedExtraEvaluateRes.statusCode, 403);
-      assert.equal(disallowedExtraEvaluateRes.jsonBody().error.code, 'recipient_extra_ai_review_not_enabled');
+      const disallowedRereviewRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
+      assert.equal(disallowedRereviewRes.statusCode, 403);
+      assert.equal(disallowedRereviewRes.jsonBody().error.code, 'reevaluation_not_allowed');
 
       const saveAllowedDraftRes = await saveRecipientDraft(allowed.token, {
         shared_payload: {
@@ -1052,523 +1028,12 @@ if (!hasDatabaseUrl()) {
       }, allowedRecipientCookie);
       assert.equal(saveAllowedDraftRes.statusCode, 200);
 
-      const allowedWorkspaceRes = await getRecipientWorkspace(allowed.token, allowedRecipientCookie);
-      assert.equal(allowedWorkspaceRes.statusCode, 200);
-      assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.can_reevaluate, false);
-      assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, true);
-      assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
-      assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
-      assert.equal(allowedWorkspaceRes.jsonBody()?.share?.permissions?.extra_ai_review_enabled, true);
-
-      const allowedInitialEvaluateRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
-      assert.equal(allowedInitialEvaluateRes.statusCode, 200);
-      const initialBody = allowedInitialEvaluateRes.jsonBody();
-      assert.equal(initialBody.ok, true);
-      assert.equal(Boolean(initialBody.evaluation_id), true);
-      assert.equal(typeof initialBody.evaluation.public_report, 'object');
-
-      const changedAllowedDraftRes = await saveRecipientDraft(allowed.token, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient changes the same round after the first review and should be allowed one extra owner-enabled AI review.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient confidential contribution changes for the owner-enabled extra review.',
-        },
-        workflow_step: 2,
-      }, allowedRecipientCookie);
-      assert.equal(changedAllowedDraftRes.statusCode, 200);
-
-      const allowedExtraEvaluateRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
-      assert.equal(allowedExtraEvaluateRes.statusCode, 200);
-      assert.equal(Boolean(allowedExtraEvaluateRes.jsonBody()?.evaluation_id), true);
-    } finally {
-      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
-    }
-  });
-
-  test('Owner can enable one extra recipient AI review without charging blocked attempts or allowing unlimited reruns', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const ownerCookie = makeOwnerCookie('p2_toggle_recipient_review');
-    const recipientEmail = 'toggle-recipient@example.com';
-    const recipientCookie = makeRecipientCookie('p2_toggle_recipient_review', recipientEmail);
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Recipient AI Review Toggle',
-      docAText: 'Owner confidential baseline for toggle coverage.',
-      docBText: 'Shared baseline text long enough for recipient mediation attempts.',
-    });
-
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      canEdit: true,
-      canEditConfidential: true,
-      canReevaluate: false,
-      allowRecipientAiReview: false,
-    });
-
-    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'proceed',
-        executive_summary: 'Recipient-safe summary from enabled shared review flow.',
-      },
-      evaluation_provider: 'test',
-      similarity_score: 74,
-    });
-
-    try {
-      const saveDraftRes = await saveRecipientDraft(link.token, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient draft content for a blocked-then-enabled AI mediation review.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient confidential toggle test details.',
-        },
-        workflow_step: 2,
-      }, recipientCookie);
-      assert.equal(saveDraftRes.statusCode, 200);
-
-      const initialEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(initialEvaluateRes.statusCode, 200);
-
-      const changedDraftRes = await saveRecipientDraft(link.token, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient changes the same round after the first review and now needs an owner-enabled extra AI review.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient confidential toggle test details after the first review.',
-        },
-        workflow_step: 2,
-      }, recipientCookie);
-      assert.equal(changedDraftRes.statusCode, 200);
-
-      const initiallyBlockedRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(initiallyBlockedRes.statusCode, 403);
-      assert.equal(initiallyBlockedRes.jsonBody()?.error?.code, 'recipient_extra_ai_review_not_enabled');
-
-      const enableRes = await updateSharedReportLink(link.token, ownerCookie, {
-        allowRecipientAiReview: true,
-      });
-      assert.equal(enableRes.statusCode, 200);
-      assert.equal(enableRes.jsonBody()?.sharedReport?.allow_recipient_ai_review, true);
-
-      const enabledEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(enabledEvaluateRes.statusCode, 200);
-
-      const thirdDraftRes = await saveRecipientDraft(link.token, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient applies a third materially different update in the same round and should hit the one-extra-review cap.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient confidential toggle test details for the capped third attempt.',
-        },
-        workflow_step: 2,
-      }, recipientCookie);
-      assert.equal(thirdDraftRes.statusCode, 200);
-
-      const blockedAgainRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(blockedAgainRes.statusCode, 409);
-      assert.equal(blockedAgainRes.jsonBody()?.error?.code, 'recipient_rereview_limit_reached');
-
-      const db = getDb();
-      const rows = await db.execute(sql`
-        select status
-        from shared_report_evaluation_runs
-        where shared_link_id = (select id from shared_links where token = ${link.token})
-        order by created_at asc
-      `);
-      const successRows = rows.rows.filter((row) => String(row?.status || '') === 'success');
-      assert.equal(successRows.length, 2);
-    } finally {
-      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
-    }
-  });
-
-  test('failed first recipient review stays retryable and does not set initial review state when extra AI review is disabled', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const ownerCookie = makeOwnerCookie('failed_first_recipient_review');
-    const recipientEmail = 'failed-first-review@example.com';
-    const recipientCookie = makeRecipientCookie('failed_first_recipient_review', recipientEmail);
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Failed First Recipient Review',
-      docAText: 'Owner confidential baseline for failed first recipient review coverage.',
-      docBText: 'Shared baseline text that lets the recipient retry the initial mediation review.',
-    });
-
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      canEdit: true,
-      canEditConfidential: true,
-      allowRecipientAiReview: false,
-    });
-
-    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'retry',
-        executive_summary: 'No substantive mediation result was produced.',
-        narrative_valid: false,
-        generation_status: 'failed',
-        retry_recommended: true,
-      },
-      evaluation_provider: 'test',
-      similarity_score: 0,
-    });
-
-    try {
-      const saveDraftRes = await saveRecipientDraft(link.token, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient first-pass shared response that should remain eligible for retry after a failed AI mediation attempt.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient confidential context for the failed first-review retry test.',
-        },
-        workflow_step: 2,
-      }, recipientCookie);
-      assert.equal(saveDraftRes.statusCode, 200);
-
-      const firstEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(firstEvaluateRes.statusCode, 200);
-      assert.equal(Boolean(firstEvaluateRes.jsonBody()?.evaluation_id), true);
-
-      const workspaceAfterFirstRes = await getRecipientWorkspace(link.token, recipientCookie);
-      assert.equal(workspaceAfterFirstRes.statusCode, 200);
-      assert.equal(workspaceAfterFirstRes.jsonBody()?.share?.permissions?.has_initial_ai_review, false);
-      assert.equal(workspaceAfterFirstRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
-      assert.equal(workspaceAfterFirstRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
-      assert.equal(workspaceAfterFirstRes.jsonBody()?.share?.permissions?.extra_ai_review_used, false);
-
-      const secondEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(secondEvaluateRes.statusCode, 200);
-      assert.notEqual(
-        String(secondEvaluateRes.jsonBody()?.evaluation_id || ''),
-        String(firstEvaluateRes.jsonBody()?.evaluation_id || ''),
-      );
-      assert.notEqual(secondEvaluateRes.jsonBody()?.cached, true);
-
-      const workspaceAfterSecondRes = await getRecipientWorkspace(link.token, recipientCookie);
-      assert.equal(workspaceAfterSecondRes.statusCode, 200);
-      assert.equal(workspaceAfterSecondRes.jsonBody()?.share?.permissions?.has_initial_ai_review, false);
-      assert.equal(workspaceAfterSecondRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
-      assert.equal(workspaceAfterSecondRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
-      assert.equal(workspaceAfterSecondRes.jsonBody()?.share?.permissions?.extra_ai_review_used, false);
-    } finally {
-      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
-    }
-  });
-
-  test('failed extra recipient AI review does not consume the one extra allowance and remains retryable', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const ownerCookie = makeOwnerCookie('failed_extra_recipient_review');
-    const recipientEmail = 'failed-extra-review@example.com';
-    const recipientCookie = makeRecipientCookie('failed_extra_recipient_review', recipientEmail);
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Failed Extra Recipient Review',
-      docAText: 'Owner confidential baseline for failed extra recipient review coverage.',
-      docBText: 'Shared baseline text that supports an initial review and one retryable failed extra review.',
-    });
-
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      canEdit: true,
-      canEditConfidential: true,
-      allowRecipientAiReview: true,
-    });
-
-    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'proceed',
-        executive_summary: 'Initial mediation review completed successfully.',
-      },
-      evaluation_provider: 'test',
-      similarity_score: 75,
-    });
-
-    try {
-      const saveInitialDraftRes = await saveRecipientDraft(link.token, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient shared response for the successful initial mediation review before the failed extra attempt.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient confidential notes for the successful initial mediation review.',
-        },
-        workflow_step: 2,
-      }, recipientCookie);
-      assert.equal(saveInitialDraftRes.statusCode, 200);
-
-      const initialEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(initialEvaluateRes.statusCode, 200);
-
-      const changedDraftRes = await saveRecipientDraft(link.token, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient materially changes the same round and then hits a failed extra AI review that must stay retryable.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient confidential notes for the failed extra AI review retry test.',
-        },
-        workflow_step: 2,
-      }, recipientCookie);
-      assert.equal(changedDraftRes.statusCode, 200);
-
-      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-        report: {
-          recommendation: 'retry',
-          executive_summary: 'Extra AI review produced no substantive result.',
-          narrative_valid: false,
-          generation_status: 'failed',
-          retry_recommended: true,
-        },
-        evaluation_provider: 'test',
-        similarity_score: 0,
-      });
-
-      const firstExtraEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(firstExtraEvaluateRes.statusCode, 200);
-      assert.equal(Boolean(firstExtraEvaluateRes.jsonBody()?.evaluation_id), true);
-
-      const workspaceAfterFailedExtraRes = await getRecipientWorkspace(link.token, recipientCookie);
-      assert.equal(workspaceAfterFailedExtraRes.statusCode, 200);
-      assert.equal(workspaceAfterFailedExtraRes.jsonBody()?.share?.permissions?.has_initial_ai_review, true);
-      assert.equal(workspaceAfterFailedExtraRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, false);
-      assert.equal(workspaceAfterFailedExtraRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, true);
-      assert.equal(workspaceAfterFailedExtraRes.jsonBody()?.share?.permissions?.extra_ai_review_used, false);
-
-      const secondExtraEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(secondExtraEvaluateRes.statusCode, 200);
-      assert.notEqual(
-        String(secondExtraEvaluateRes.jsonBody()?.evaluation_id || ''),
-        String(firstExtraEvaluateRes.jsonBody()?.evaluation_id || ''),
-      );
-      assert.notEqual(secondExtraEvaluateRes.jsonBody()?.cached, true);
-
-      const workspaceAfterRetryRes = await getRecipientWorkspace(link.token, recipientCookie);
-      assert.equal(workspaceAfterRetryRes.statusCode, 200);
-      assert.equal(workspaceAfterRetryRes.jsonBody()?.share?.permissions?.has_initial_ai_review, true);
-      assert.equal(workspaceAfterRetryRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, true);
-      assert.equal(workspaceAfterRetryRes.jsonBody()?.share?.permissions?.extra_ai_review_used, false);
-    } finally {
-      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
-    }
-  });
-
-  test('Recipient can still run the first AI review and send back when extra AI review is disabled, and send-back does not create an additional review run', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const ownerCookie = makeOwnerCookie('p2_send_without_extra_review');
-    const recipientEmail = 'send-without-extra-review@example.com';
-    const recipientCookie = makeRecipientCookie('p2_send_without_extra_review', recipientEmail);
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Send Without Extra Review',
-      docAText: 'Owner confidential baseline for send-without-review coverage.',
-      docBText: 'Shared baseline text that the recipient can revise and send back without extra AI review.',
-    });
-
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      canEdit: true,
-      canEditConfidential: true,
-      canSendBack: true,
-      allowRecipientAiReview: false,
-    });
-    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'proceed',
-        executive_summary: 'Recipient can send after a successful first AI mediation review.',
-      },
-      evaluation_provider: 'test',
-      similarity_score: 76,
-    });
-
-    try {
-      const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
-      assert.equal(workspaceRes.statusCode, 200);
-      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, true);
-      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_initial_ai_review, true);
-      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
-      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.extra_ai_review_enabled, false);
-      assert.equal(workspaceRes.jsonBody()?.share?.permissions?.can_send_back, true);
-
-      const saveRes = await saveRecipientDraft(link.token, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient response can still be drafted and sent even though extra AI review is disabled.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient confidential notes for a send-only response path.',
-        },
-        workflow_step: 2,
-      }, recipientCookie);
-      assert.equal(saveRes.statusCode, 200);
-
-      const initialEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(initialEvaluateRes.statusCode, 200);
-
-      const postReviewWorkspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
-      assert.equal(postReviewWorkspaceRes.statusCode, 200);
-      assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.can_run_ai_review, false);
-      assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.has_initial_ai_review, true);
-      assert.equal(postReviewWorkspaceRes.jsonBody()?.share?.permissions?.can_run_extra_ai_review, false);
-
-      const sendBackRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(sendBackRes.statusCode, 200);
-      assert.equal(sendBackRes.jsonBody()?.status, 'sent');
-
-      const db = getDb();
-      const reviewRunRows = await db.execute(sql`
-        select id, status
-        from shared_report_evaluation_runs
-        where shared_link_id = (select id from shared_links where token = ${link.token})
-        order by created_at asc
-      `);
-      assert.equal(reviewRunRows.rows.length, 1);
-      assert.equal(String(reviewRunRows.rows[0]?.status || ''), 'success');
-
-      const sentRevisionRows = await db.execute(sql`
-        select status
-        from shared_report_recipient_revisions
-        where shared_link_id = (select id from shared_links where token = ${link.token})
-        order by created_at desc
-        limit 1
-      `);
-      assert.equal(sentRevisionRows.rows.length, 1);
-      assert.equal(String(sentRevisionRows.rows[0]?.status || ''), 'sent');
-    } finally {
-      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
-    }
-  });
-
-  test('Non-owner cannot toggle recipient AI review access', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const ownerCookie = makeOwnerCookie('p2_toggle_forbidden');
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Recipient AI Review Toggle Forbidden',
-      docAText: 'Owner confidential baseline for forbidden toggle coverage.',
-      docBText: 'Shared baseline for forbidden toggle coverage.',
-    });
-    const link = await createSharedReportLink(ownerCookie, comparison.id, 'forbidden@example.com', {
-      allowRecipientAiReview: false,
-    });
-
-    const recipientCookie = makeRecipientCookie('p2_toggle_forbidden_recipient', 'forbidden@example.com');
-    const toggleRes = await updateSharedReportLink(link.token, recipientCookie, {
-      allowRecipientAiReview: true,
-    });
-    assert.equal(toggleRes.statusCode, 403);
-    assert.equal(toggleRes.jsonBody()?.error?.code, 'forbidden');
-  });
-
-  test('Owner full mediation review caches exact duplicates and blocks a second changed re-review in the same round', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const ownerCookie = makeOwnerCookie('p2_owner_rereview_limit');
-    const recipientEmail = 'owner-rereview@example.com';
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Owner Same-Round Re-review Limit',
-      docAText: 'Owner confidential baseline for same-round owner mediation coverage.',
-      docBText: 'Shared owner baseline text that the recipient will answer against.',
-    });
-
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      allowRecipientAiReview: true,
-    });
-    const round2SharedText =
-      'Recipient reply establishes a bilateral round so owner mediation reviews use the round-specific guardrails.';
-    const round2ConfidentialText =
-      'Recipient confidential details used only to enrich the owner mediation review.';
-
-    const db = getDb();
-    await recordSharedReportContributionGroup({
-      db,
-      proposalId: comparison.proposal_id,
-      comparisonId: comparison.id,
-      sharedLinkId: null,
-      authorRole: 'recipient',
-      authorUserId: null,
-      roundNumber: 2,
-      sourceKind: 'shared_report_send_back',
-      newId,
-      sharedPayload: {
-        label: 'Shared Information',
-        text: round2SharedText,
-      },
-      confidentialPayload: {
-        label: 'Confidential Information',
-        notes: round2ConfidentialText,
-      },
-    });
-
-    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async ({ docAText, docBText }) => ({
-      report: {
-        recommendation: 'proceed',
-        executive_summary: `Owner mediation summary for ${docAText.length}:${docBText.length}.`,
-      },
-      evaluation_provider: 'test',
-      similarity_score: 78,
-    });
-
-    try {
-      const initialRes = await evaluateComparison(comparison.id, ownerCookie, {});
-      assert.equal(initialRes.statusCode, 200);
-      assert.equal(initialRes.jsonBody()?.cached, undefined);
-      assert.equal(initialRes.jsonBody()?.evaluation_input_trace?.analysis_stage, 'mediation_review');
-
-      const duplicateRes = await evaluateComparison(comparison.id, ownerCookie, {});
-      assert.equal(duplicateRes.statusCode, 200);
-      assert.equal(duplicateRes.jsonBody()?.cached, true);
-
-      const firstChangedRes = await evaluateComparison(comparison.id, ownerCookie, {
-        docAText: 'Owner confidential baseline for same-round owner mediation coverage with a revised internal fallback position and timing notes.',
-        docBText: 'Shared owner baseline text now adds revised acceptance sequencing, implementation constraints, and approvals for the same round.',
-      });
-      assert.equal(firstChangedRes.statusCode, 200);
-      assert.equal(firstChangedRes.jsonBody()?.cached, undefined);
-      assert.equal(
-        Number(firstChangedRes.jsonBody()?.evaluation_input_trace?.bilateral_round_number || 0) >= 1,
-        true,
-      );
-
-      const secondChangedRes = await evaluateComparison(comparison.id, ownerCookie, {
-        docAText: 'Owner confidential baseline for same-round owner mediation coverage with a second changed fallback package and escalation notes.',
-        docBText: 'Shared owner baseline text now adds a second changed same-round proposal package that should exceed the owner re-review cap.',
-      });
-      assert.equal(secondChangedRes.statusCode, 409);
-      assert.equal(secondChangedRes.jsonBody()?.error?.code, 'owner_rereview_limit_reached');
-
-      const evalRows = await db.execute(sql`
-        select source, status
-        from proposal_evaluations
-        where proposal_id = ${comparison.proposal_id}
-        order by created_at asc
-      `);
-      const completedMediationRows = evalRows.rows.filter(
-        (row) =>
-          String(row?.source || '') === 'document_comparison_mediation' &&
-          String(row?.status || '') === 'completed',
-      );
-      assert.equal(completedMediationRows.length, 2);
+      const allowedRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
+      assert.equal(allowedRes.statusCode, 200);
+      const body = allowedRes.jsonBody();
+      assert.equal(body.ok, true);
+      assert.equal(Boolean(body.evaluation_id), true);
+      assert.equal(typeof body.evaluation.public_report, 'object');
     } finally {
       globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
     }
@@ -2898,17 +2363,6 @@ if (!hasDatabaseUrl()) {
 
       const sendRound2 = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
       assert.equal(sendRound2.statusCode, 200);
-      const ownerReturnToken = String(sendRound2.jsonBody()?.return_link?.token || '');
-      assert.notEqual(ownerReturnToken, '');
-
-      const ownerReturnLink = await getSharedLinkRowByToken(ownerReturnToken);
-      const ownerReturnMetadata =
-        ownerReturnLink?.report_metadata &&
-        typeof ownerReturnLink.report_metadata === 'object' &&
-        !Array.isArray(ownerReturnLink.report_metadata)
-          ? ownerReturnLink.report_metadata
-          : {};
-      assert.equal(ownerReturnMetadata.allow_recipient_ai_review, false);
 
       capturedInputs.length = 0;
       const ownerEvaluateRes = await evaluateComparison(comparison.id, ownerCookie, {});
@@ -3098,7 +2552,7 @@ if (!hasDatabaseUrl()) {
       assert.equal(cappedEvaluateRes.jsonBody()?.error?.code, 'recipient_rereview_limit_reached');
       assert.equal(
         cappedEvaluateRes.jsonBody()?.error?.message,
-        'An extra AI review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
+        'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
       );
       assert.equal(evaluatorCallCount, 2);
 
@@ -3280,7 +2734,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('shared-report context-estimate e2e later-round flow separates baseline from prior rounds and persists workspace/runtime estimates', async () => {
+  test('shared-report repeated bilateral v2 evaluations stay in AI Mediation Review while later rounds add progress metadata', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -3300,16 +2754,6 @@ if (!hasDatabaseUrl()) {
       canReevaluate: true,
       canSendBack: true,
     });
-
-    const initialWorkspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
-    assert.equal(initialWorkspaceRes.statusCode, 200);
-    const initialContextEstimate = initialWorkspaceRes.jsonBody()?.review_context_estimate || {};
-    assert.equal(typeof initialContextEstimate.totalEstimatedInputTokens, 'number');
-    assert.equal(initialContextEstimate.initialProposalContextIncluded, true);
-    assert.equal(initialContextEstimate.priorRoundsConsidered, 0);
-    assert.equal(initialContextEstimate.includedPriorRounds, 0);
-    assert.equal(initialContextEstimate.previousReviewsConsidered, 0);
-    assert.equal(Array.isArray(initialContextEstimate.omittedDueToCapacity), true);
 
     const firstSaveRes = await saveRecipientDraft(link.token, {
       shared_payload: {
@@ -3515,14 +2959,6 @@ if (!hasDatabaseUrl()) {
       assert.equal(ownerSendBackRes.statusCode, 200);
       const recipientRoundTwoToken = String(ownerSendBackRes.jsonBody()?.return_link?.token || '');
       assert.notEqual(recipientRoundTwoToken, '');
-      const recipientRoundTwoLink = await getSharedLinkRowByToken(recipientRoundTwoToken);
-      const recipientRoundTwoMetadata =
-        recipientRoundTwoLink?.report_metadata &&
-        typeof recipientRoundTwoLink.report_metadata === 'object' &&
-        !Array.isArray(recipientRoundTwoLink.report_metadata)
-          ? recipientRoundTwoLink.report_metadata
-          : {};
-      assert.equal(recipientRoundTwoMetadata.allow_recipient_ai_review, false);
 
       const secondSaveRes = await saveRecipientDraft(recipientRoundTwoToken, {
         shared_payload: {
@@ -3536,42 +2972,6 @@ if (!hasDatabaseUrl()) {
         workflow_step: 2,
       }, recipientCookie);
       assert.equal(secondSaveRes.statusCode, 200);
-
-      const initialLaterRoundEvaluateRes = await evaluateRecipientDraft(
-        recipientRoundTwoToken,
-        {},
-        recipientCookie,
-        { engine: 'v2' },
-      );
-      assert.equal(initialLaterRoundEvaluateRes.statusCode, 200);
-
-      const changedSecondSaveRes = await saveRecipientDraft(recipientRoundTwoToken, {
-        shared_payload: {
-          label: 'Shared Information',
-          text: 'Recipient round two adds a further update after the initial review and now needs the owner to allow one extra AI review.',
-        },
-        recipient_confidential_payload: {
-          label: 'Confidential Information',
-          notes: 'Recipient round two internal note changes after the initial review for extra-review gating.',
-        },
-        workflow_step: 2,
-      }, recipientCookie);
-      assert.equal(changedSecondSaveRes.statusCode, 200);
-
-      const disabledLaterRoundEvaluateRes = await evaluateRecipientDraft(
-        recipientRoundTwoToken,
-        {},
-        recipientCookie,
-        { engine: 'v2' },
-      );
-      assert.equal(disabledLaterRoundEvaluateRes.statusCode, 403);
-      assert.equal(disabledLaterRoundEvaluateRes.jsonBody()?.error?.code, 'recipient_extra_ai_review_not_enabled');
-
-      const enableLaterRoundReviewRes = await updateSharedReportLink(recipientRoundTwoToken, ownerCookie, {
-        allowRecipientAiReview: true,
-      });
-      assert.equal(enableLaterRoundReviewRes.statusCode, 200);
-      assert.equal(enableLaterRoundReviewRes.jsonBody()?.sharedReport?.allow_recipient_ai_review, true);
 
       const secondEvaluateRes = await evaluateRecipientDraft(recipientRoundTwoToken, {}, recipientCookie, { engine: 'v2' });
       assert.equal(secondEvaluateRes.statusCode, 200);
@@ -3611,42 +3011,12 @@ if (!hasDatabaseUrl()) {
       assert.equal(typeof diagnostics.runtimeBudgetExhausted, 'boolean');
       assert.equal(typeof diagnostics.runtimePhaseElapsedMs, 'object');
       assert.equal(typeof diagnostics.narrativeWordCount, 'number');
-      const savedContextEstimate = evaluationRows.rows[0]?.result_json?.input_trace?.context_estimate || {};
-      assert.equal(typeof savedContextEstimate.totalEstimatedInputTokens, 'number');
-      assert.equal(savedContextEstimate.initialProposalContextIncluded, true);
-      assert.equal(savedContextEstimate.priorRoundsConsidered > 0, true);
-      assert.equal(savedContextEstimate.includedPriorRounds, savedContextEstimate.priorRoundsConsidered);
-      assert.equal(savedContextEstimate.previousReviewsConsidered >= 1, true);
-      assert.equal(typeof savedContextEstimate.retrievedChunkCount, 'number');
-      assert.equal(Array.isArray(savedContextEstimate.omittedDueToCapacity), true);
-      assert.equal(
-        savedContextEstimate.omittedDueToCapacity.every((entry) => typeof entry === 'string' && entry.length > 0),
-        true,
-      );
-      assert.notEqual(savedContextEstimate.capacityLabel, 'Very Light');
 
-      const workspaceRes = await getRecipientWorkspace(recipientRoundTwoToken, recipientCookie);
+      const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
       assert.equal(workspaceRes.statusCode, 200);
       assert.equal(
         'evaluation_diagnostics' in (workspaceRes.jsonBody()?.latestEvaluation?.result_json || {}),
         false,
-      );
-      const workspaceContextEstimate = workspaceRes.jsonBody()?.review_context_estimate || {};
-      assert.equal(typeof workspaceContextEstimate.totalEstimatedInputTokens, 'number');
-      assert.equal(workspaceContextEstimate.initialProposalContextIncluded, true);
-      assert.equal(workspaceContextEstimate.priorRoundsConsidered > 0, true);
-      assert.equal(workspaceContextEstimate.includedPriorRounds, workspaceContextEstimate.priorRoundsConsidered);
-      assert.equal(workspaceContextEstimate.previousReviewsConsidered >= 1, true);
-      assert.equal(typeof workspaceContextEstimate.retrievedChunkCount, 'number');
-      assert.equal(Array.isArray(workspaceContextEstimate.omittedDueToCapacity), true);
-      assert.equal(
-        workspaceContextEstimate.omittedDueToCapacity.every((entry) => typeof entry === 'string' && entry.length > 0),
-        true,
-      );
-      assert.equal(
-        workspaceContextEstimate.totalEstimatedInputTokens >
-          workspaceContextEstimate.currentBundleEstimatedTokens,
-        true,
       );
     } finally {
       cleanup();
@@ -3656,208 +3026,5 @@ if (!hasDatabaseUrl()) {
         process.env.MEDIATION_AI_PROVIDER = previousMediationProvider;
       }
     }
-  });
-
-  test('Recipient AI review freshness: First review has current_review state', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const seed = 'freshness_first_review';
-    const ownerCookie = makeOwnerCookie(seed);
-    const recipientEmail = `${seed}_recipient@example.com`;
-    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
-
-    const comparison = await createComparison(ownerCookie, {
-      title: 'First Review Test',
-      docAText: 'Owner text',
-      docBText: 'Recipient text',
-    });
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      canView: true,
-      canEdit: true,
-      canReevaluate: true,
-      canSendBack: true,
-      allowRecipientAiReview: true,
-    });
-
-    await saveRecipientDraft(link.token, {
-      shared_payload: { label: 'Shared', text: 'Test content' },
-      recipient_confidential_payload: { label: 'Confidential', notes: 'Test notes' },
-      workflow_step: 2,
-    }, recipientCookie);
-
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'review',
-        executive_summary: 'Test review',
-        sections: [{ heading: 'Summary', bullets: ['Test bullet'] }],
-      },
-      evaluation_provider: 'test',
-      similarity_score: 70,
-    });
-
-    const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-    assert.equal(evaluateRes.statusCode, 200);
-
-    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
-    const permissions = workspaceRes.jsonBody()?.share?.permissions || {};
-    assert.equal(permissions.has_current_ai_review, true, 'Should have current review after evaluation');
-  });
-
-  test('Recipient AI review freshness: Editing draft after review creates stale state', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const seed = 'freshness_stale_after_edit';
-    const ownerCookie = makeOwnerCookie(seed);
-    const recipientEmail = `${seed}_recipient@example.com`;
-    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
-
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Stale After Edit Test',
-      docAText: 'Owner text',
-      docBText: 'Recipient text',
-    });
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      canView: true,
-      canEdit: true,
-      canReevaluate: true,
-      canSendBack: true,
-      allowRecipientAiReview: true,
-    });
-
-    await saveRecipientDraft(link.token, {
-      shared_payload: { label: 'Shared', text: 'Original content' },
-      recipient_confidential_payload: { label: 'Confidential', notes: 'Original notes' },
-      workflow_step: 2,
-    }, recipientCookie);
-
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'review',
-        executive_summary: 'Test review',
-        sections: [{ heading: 'Summary', bullets: ['Test bullet'] }],
-      },
-      evaluation_provider: 'test',
-      similarity_score: 70,
-    });
-
-    await evaluateRecipientDraft(link.token, {}, recipientCookie);
-
-    // Edit draft to create stale state
-    await saveRecipientDraft(link.token, {
-      shared_payload: { label: 'Shared', text: 'EDITED content' },
-      recipient_confidential_payload: { label: 'Confidential', notes: 'Original notes' },
-      workflow_step: 2,
-    }, recipientCookie);
-
-    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
-    const permissions = workspaceRes.jsonBody()?.share?.permissions || {};
-    assert.equal(permissions.has_stale_ai_review, true, 'Edit should create stale state');
-  });
-
-  test('Recipient AI review freshness: Send-back with current review includes evaluation', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const seed = 'freshness_send_current';
-    const ownerCookie = makeOwnerCookie(seed);
-    const recipientEmail = `${seed}_recipient@example.com`;
-    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
-
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Send Current Test',
-      docAText: 'Owner text',
-      docBText: 'Recipient text',
-    });
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      canView: true,
-      canEdit: true,
-      canReevaluate: true,
-      canSendBack: true,
-      allowRecipientAiReview: true,
-    });
-
-    await saveRecipientDraft(link.token, {
-      shared_payload: { label: 'Shared', text: 'Test content' },
-      recipient_confidential_payload: { label: 'Confidential', notes: 'Test notes' },
-      workflow_step: 2,
-    }, recipientCookie);
-
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'review',
-        executive_summary: 'Test review',
-        sections: [{ heading: 'Summary', bullets: ['Test bullet'] }],
-      },
-      evaluation_provider: 'test',
-      similarity_score: 70,
-    });
-
-    const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-    assert.equal(evaluateRes.statusCode, 200);
-
-    const sendRes = await sendBackRecipientDraft(link.token, {
-      shared_payload: { label: 'Shared', text: 'Test content' },
-      recipient_confidential_payload: { label: 'Confidential', notes: 'Test notes' },
-    }, recipientCookie);
-    assert.equal(sendRes.statusCode, 200);
-
-    const body = sendRes.jsonBody();
-    const reportResult = body?.comparison?.evaluation_result?.report || body?.public_report;
-    assert.ok(reportResult, 'Current evaluation should be in response');
-  });
-
-  test('Recipient AI review freshness: Extra review creates new current state', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const seed = 'freshness_extra_review';
-    const ownerCookie = makeOwnerCookie(seed);
-    const recipientEmail = `${seed}_recipient@example.com`;
-    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
-
-    const comparison = await createComparison(ownerCookie, {
-      title: 'Extra Review Test',
-      docAText: 'Owner text',
-      docBText: 'Recipient text',
-    });
-    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
-      canView: true,
-      canEdit: true,
-      canReevaluate: true,
-      allowRecipientAiReview: true,
-    });
-
-    await saveRecipientDraft(link.token, {
-      shared_payload: { label: 'Shared', text: 'Content' },
-      recipient_confidential_payload: { label: 'Confidential', notes: 'Notes' },
-      workflow_step: 2,
-    }, recipientCookie);
-
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'review',
-        executive_summary: 'Test review',
-        sections: [{ heading: 'Summary', bullets: ['Test'] }],
-      },
-      evaluation_provider: 'test',
-      similarity_score: 70,
-    });
-
-    await evaluateRecipientDraft(link.token, {}, recipientCookie);
-
-    await saveRecipientDraft(link.token, {
-      shared_payload: { label: 'Shared', text: 'EDITED content' },
-      recipient_confidential_payload: { label: 'Confidential', notes: 'Initial' },
-      workflow_step: 2,
-    }, recipientCookie);
-
-    const extraEvalRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-    assert.equal(extraEvalRes.statusCode, 200);
-
-    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
-    const permissions = workspaceRes.jsonBody()?.share?.permissions || {};
-    assert.equal(permissions.has_current_ai_review, true, 'Extra review should be current');
   });
 }

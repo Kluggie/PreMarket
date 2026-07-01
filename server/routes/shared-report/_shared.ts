@@ -1,17 +1,11 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { ApiError } from '../../_lib/errors.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { newId } from '../../_lib/ids.js';
 import { PRIVATE_SENDER_LABEL } from '../../_lib/private-mode.js';
 import { clientIpForRateLimit } from '../../_lib/security.js';
-import { getRecipientAiReviewEnabled } from '../../_lib/shared-link-review-permissions.js';
 import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
-import {
-  htmlToEditorText,
-  sanitizeEditorHtml,
-  sanitizeEditorText,
-} from '../../_lib/document-editor-sanitization.js';
 
 export const SHARED_REPORT_ROUTE = '/api/shared-report/[token]';
 export const RECIPIENT_ROLE = 'recipient';
@@ -49,49 +43,6 @@ export function toObject(value: unknown): Record<string, unknown> {
     return {};
   }
   return value as Record<string, unknown>;
-}
-
-function extractRecipientAiReviewReport(source: unknown) {
-  const candidate = toObject(source);
-  const directReport = toObject(candidate.report);
-  if (Object.keys(directReport).length > 0) {
-    return directReport;
-  }
-
-  const evaluationResult = toObject(candidate.evaluation_result || candidate.evaluationResult);
-  const evaluationResultReport = toObject(evaluationResult.report);
-  if (Object.keys(evaluationResultReport).length > 0) {
-    return evaluationResultReport;
-  }
-
-  const resultJson = toObject(candidate.resultJson || candidate.result_json);
-  const resultJsonEvaluation = toObject(resultJson.evaluation_result || resultJson.evaluationResult);
-  const resultJsonReport = toObject(resultJsonEvaluation.report);
-  if (Object.keys(resultJsonReport).length > 0) {
-    return resultJsonReport;
-  }
-
-  const publicReport = toObject(
-    candidate.resultPublicReport || candidate.result_public_report || candidate.public_report,
-  );
-  if (Object.keys(publicReport).length > 0) {
-    return publicReport;
-  }
-
-  return candidate;
-}
-
-export function isGenerationFailureFallbackReport(report: unknown) {
-  const candidate = extractRecipientAiReviewReport(report);
-  return (
-    asText(candidate.generation_status).toLowerCase() === 'failed' &&
-    candidate.retry_recommended !== false
-  );
-}
-
-export function isSubstantiveRecipientAiReviewReport(report: unknown) {
-  const candidate = extractRecipientAiReviewReport(report);
-  return Object.keys(candidate).length > 0 && !isGenerationFailureFallbackReport(candidate);
 }
 
 function getCurrentUserId(currentUser: any) {
@@ -286,30 +237,8 @@ export async function resolveSharedReportToken(params: ResolveParams) {
 }
 
 export function buildShareView(link: any) {
-  return buildShareViewWithReviewState(link, {});
-}
-
-export function buildShareViewWithReviewState(
-  link: any,
-  reviewState: {
-    canRunAiReview?: boolean;
-    canRunInitialAiReview?: boolean;
-    canRunExtraAiReview?: boolean;
-    hasInitialAiReview?: boolean;
-    extraAiReviewEnabled?: boolean;
-    extraAiReviewUsed?: boolean;
-    hasCurrentAiReview?: boolean;
-    hasStaleAiReview?: boolean;
-    staleReviewEvaluationId?: string | null;
-    currentReviewEvaluationId?: string | null;
-  } = {},
-) {
   const invitedEmail = normalizeEmail(link.recipientEmail) || null;
   const authorizedEmail = normalizeEmail(link.authorizedEmail) || null;
-  const extraAiReviewEnabled =
-    typeof reviewState.extraAiReviewEnabled === 'boolean'
-      ? reviewState.extraAiReviewEnabled
-      : getRecipientAiReviewEnabled(link);
   return {
     id: link.id,
     status: asText(link.status) || 'active',
@@ -326,19 +255,6 @@ export function buildShareViewWithReviewState(
       can_edit_shared: Boolean(link.canEdit),
       can_edit_confidential: Boolean(link.canEditConfidential),
       can_reevaluate: Boolean(link.canReevaluate),
-      can_run_ai_review:
-        typeof reviewState.canRunAiReview === 'boolean'
-          ? reviewState.canRunAiReview
-          : extraAiReviewEnabled,
-      can_run_initial_ai_review: Boolean(reviewState.canRunInitialAiReview),
-      can_run_extra_ai_review: Boolean(reviewState.canRunExtraAiReview),
-      has_initial_ai_review: Boolean(reviewState.hasInitialAiReview),
-      has_current_ai_review: Boolean(reviewState.hasCurrentAiReview),
-      has_stale_ai_review: Boolean(reviewState.hasStaleAiReview),
-      stale_review_evaluation_id: reviewState.staleReviewEvaluationId || null,
-      current_review_evaluation_id: reviewState.currentReviewEvaluationId || null,
-      extra_ai_review_enabled: extraAiReviewEnabled,
-      extra_ai_review_used: Boolean(reviewState.extraAiReviewUsed),
       can_send_back: Boolean(link.canSendBack),
     },
   };
@@ -583,85 +499,6 @@ export async function getLatestRecipientEvaluationRun(db: any, linkId: string) {
   return run || null;
 }
 
-export async function getRecipientAiReviewStateForRound(
-  db: any,
-  params: {
-    link: any;
-    outgoingRoundNumber: number;
-  },
-) {
-  const extraAiReviewEnabled = getRecipientAiReviewEnabled(params.link);
-  // Shared-report send-back creates a new link token per bilateral round, so
-  // the current link already scopes evaluation runs to the active round. Using
-  // the persisted link id is more reliable than re-parsing `result_json`.
-  // Additionally filter by exchange_round for defensive scoping verification.
-  const linkMetadata = toObject(params.link.reportMetadata);
-  const linkExchangeRound = Number(linkMetadata?.exchange_round || 0);
-  
-  // Build WHERE conditions: always filter by link + role + status,
-  // and additionally filter by exchange_round if it's a valid positive number
-  const whereConditions: any[] = [
-    eq(schema.sharedReportEvaluationRuns.sharedLinkId, params.link.id),
-    eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
-    inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
-  ];
-  
-  if (Number.isFinite(linkExchangeRound) && linkExchangeRound > 0) {
-    whereConditions.push(
-      sql`${schema.sharedReportEvaluationRuns.resultJson}->>'exchange_round' = ${String(linkExchangeRound)}`,
-    );
-  }
-  
-  const linkRunWhereClause = and(...whereConditions);
-
-  const runRows = await db
-    .select({
-      id: schema.sharedReportEvaluationRuns.id,
-      revisionId: schema.sharedReportEvaluationRuns.revisionId,
-      status: schema.sharedReportEvaluationRuns.status,
-      resultJson: schema.sharedReportEvaluationRuns.resultJson,
-      resultPublicReport: schema.sharedReportEvaluationRuns.resultPublicReport,
-      createdAt: schema.sharedReportEvaluationRuns.createdAt,
-    })
-    .from(schema.sharedReportEvaluationRuns)
-    .where(linkRunWhereClause)
-    .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt));
-
-  const pendingRunCount = runRows.filter(
-    (row: any) => asText(row?.status).toLowerCase() === 'pending',
-  ).length;
-  const successfulRunCount = runRows.filter(
-    (row: any) =>
-      asText(row?.status).toLowerCase() === 'success' &&
-      isSubstantiveRecipientAiReviewReport(row?.resultPublicReport),
-  ).length;
-  const nonCachedRunCount = runRows.length;
-  const hasInitialAiReview = successfulRunCount > 0;
-  const extraAiReviewUsed = successfulRunCount >= 2;
-  const canRunInitialAiReview = successfulRunCount === 0 && pendingRunCount === 0;
-  const canRunExtraAiReview =
-    hasInitialAiReview &&
-    extraAiReviewEnabled &&
-    !extraAiReviewUsed &&
-    pendingRunCount === 0;
-  const latestRoundRun = runRows?.[0] || null;
-
-  return {
-    extraAiReviewEnabled,
-    nonCachedRunCount,
-    pendingRunCount,
-    successfulRunCount,
-    hasInitialAiReview,
-    extraAiReviewUsed,
-    canRunInitialAiReview,
-    canRunExtraAiReview,
-    canRunAiReview: canRunInitialAiReview || canRunExtraAiReview,
-    latestRunId: latestRoundRun?.id || null,
-    latestRevisionId: latestRoundRun?.revisionId || null,
-    latestStatus: asText(latestRoundRun?.status) || null,
-  };
-}
-
 export async function getLatestRecipientSentRevision(db: any, linkId: string) {
   const [row] = await db
     .select()
@@ -774,196 +611,6 @@ function stableSort(value: unknown): unknown {
 
 export function stableJsonEquals(left: unknown, right: unknown) {
   return JSON.stringify(stableSort(left ?? {})) === JSON.stringify(stableSort(right ?? {}));
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// AI Review Freshness Tracking
-// ─────────────────────────────────────────────────────────────────────────
-
-/**
- * Computes a stable hash of shared and confidential text to detect if draft has changed.
- * Uses SHA256 so we can deterministically detect content changes.
- */
-export function computeDraftContentHash(params: {
-  sharedText: string;
-  confidentialText: string;
-}): string {
-  const combined = JSON.stringify({
-    shared: asText(params.sharedText || ''),
-    confidential: asText(params.confidentialText || ''),
-  });
-  return createHash('sha256').update(combined).digest('hex');
-}
-
-/**
- * Extracts the text content from a payload for hashing.
- * Handles both text and html formats.
- */
-export function extractPayloadText(payload: unknown, fallback = ''): string {
-  const source = toObject(payload);
-  const text = asText(source.text);
-  if (text) {
-    return text;
-  }
-  const html = asText(source.html);
-  if (html) {
-    // Simplified: just use HTML as-is for now. In production, would convert to text.
-    return html;
-  }
-  return asText(fallback);
-}
-
-/**
- * Coerce payload to HTML, applying sanitization.
- * Used to ensure consistent text extraction during hashing.
- */
-function coercePayloadHtml(payload: unknown, fallbackText = ''): string {
-  const source = toObject(payload);
-  const html = asText(source.html);
-  if (html) {
-    return sanitizeEditorHtml(html);
-  }
-  const text = getPayloadText(payload, fallbackText);
-  return sanitizeEditorHtml(text);
-}
-
-/**
- * Coerce payload to text with sanitization applied.
- * Must match evaluate.ts implementation to ensure consistent hash computation.
- * This is the authoritative text extraction function for content hashing.
- */
-export function coercePayloadText(payload: unknown, fallbackText = ''): string {
-  const text = getPayloadText(payload, fallbackText);
-  if (text) {
-    return sanitizeEditorText(text);
-  }
-  const html = coercePayloadHtml(payload, fallbackText);
-  return sanitizeEditorText(htmlToEditorText(html));
-}
-
-/**
- * Represents the freshness state of an AI review relative to the current draft.
- */
-export interface AiReviewFreshnessState {
-  /** True if there is at least one successful substantive AI review */
-  hasAnyReview: boolean;
-  /** True if the most recent review is current (content matches draft) */
-  hasCurrentReview: boolean;
-  /** True if a review exists but is stale (content doesn't match) */
-  hasStaleReview: boolean;
-  /** The revision ID of the most recent successful review */
-  latestReviewRevisionId: string | null;
-  /** The evaluation run ID of the current (fresh) review, if any */
-  currentReviewEvaluationId: string | null;
-  /** The evaluation run ID of the stale review, if any */
-  staleReviewEvaluationId: string | null;
-  /** Whether extra AI review is enabled for this link */
-  extraReviewEnabled: boolean;
-  /** Whether an extra review has been used */
-  extraReviewUsed: boolean;
-  /** Whether another extra review can be run */
-  canRunExtraReview: boolean;
-}
-
-/**
- * Determines freshness of AI reviews for a given draft.
- * 
- * A review is "current" if:
- * - It completed successfully
- * - It's substantive (not a failure fallback)
- * - Its stored content hash matches the current draft's content
- * 
- * A review is "stale" if it exists but doesn't match the current draft.
- */
-export async function getAiReviewFreshnessForDraft(
-  db: any,
-  params: {
-    link: any;
-    currentDraft: any;
-  },
-): Promise<AiReviewFreshnessState> {
-  const { link, currentDraft } = params;
-  const extraReviewEnabled = getRecipientAiReviewEnabled(link);
-
-  if (!currentDraft) {
-    return {
-      hasAnyReview: false,
-      hasCurrentReview: false,
-      hasStaleReview: false,
-      latestReviewRevisionId: null,
-      currentReviewEvaluationId: null,
-      staleReviewEvaluationId: null,
-      extraReviewEnabled,
-      extraReviewUsed: false,
-      canRunExtraReview: false,
-    };
-  }
-
-  // Compute hash of current draft content
-  const currentSharedText = coercePayloadText(currentDraft.sharedPayload, '');
-  const currentConfidentialText = coercePayloadText(currentDraft.recipientConfidentialPayload, '');
-  const currentContentHash = computeDraftContentHash({
-    sharedText: currentSharedText,
-    confidentialText: currentConfidentialText,
-  });
-
-  // Get all successful evaluations for this link
-  const successfulRuns = await db
-    .select()
-    .from(schema.sharedReportEvaluationRuns)
-    .where(
-      and(
-        eq(schema.sharedReportEvaluationRuns.sharedLinkId, link.id),
-        eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
-        eq(schema.sharedReportEvaluationRuns.status, 'success'),
-      ),
-    )
-    .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt));
-
-  // Filter to only substantive reviews (not fallbacks)
-  const substantiveRuns = successfulRuns.filter((row: any) =>
-    isSubstantiveRecipientAiReviewReport(row?.resultPublicReport),
-  );
-
-  if (substantiveRuns.length === 0) {
-    return {
-      hasAnyReview: false,
-      hasCurrentReview: false,
-      hasStaleReview: false,
-      latestReviewRevisionId: null,
-      currentReviewEvaluationId: null,
-      staleReviewEvaluationId: null,
-      extraReviewEnabled,
-      extraReviewUsed: false,
-      canRunExtraReview: false,
-    };
-  }
-
-  const latestRun = substantiveRuns[0];
-  const latestResultJson = toObject(latestRun?.resultJson);
-  const storedContentHash = asText(latestResultJson?.draft_content_hash);
-  const isCurrentReview = storedContentHash && storedContentHash === currentContentHash;
-
-  // Count successful substantive reviews to determine if extra review was used
-  const extraReviewUsed = substantiveRuns.length >= 2;
-
-  // Can run extra review if: initial review exists, extra is enabled, extra not used, and no pending
-  const pendingRuns = successfulRuns.filter((row: any) =>
-    asText(row?.status).toLowerCase() === 'pending',
-  );
-  const canRunExtraReview = isCurrentReview && extraReviewEnabled && !extraReviewUsed && pendingRuns.length === 0;
-
-  return {
-    hasAnyReview: substantiveRuns.length > 0,
-    hasCurrentReview: isCurrentReview,
-    hasStaleReview: !isCurrentReview && substantiveRuns.length > 0,
-    latestReviewRevisionId: asText(latestRun?.revisionId) || null,
-    currentReviewEvaluationId: isCurrentReview ? latestRun?.id : null,
-    staleReviewEvaluationId: !isCurrentReview && substantiveRuns.length > 0 ? latestRun?.id : null,
-    extraReviewEnabled,
-    extraReviewUsed,
-    canRunExtraReview,
-  };
 }
 
 function hashRateLimitKey(input: string) {

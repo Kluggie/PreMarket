@@ -5,7 +5,6 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../_lib/env.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
-import { getRecipientAiReviewEnabled } from '../../_lib/shared-link-review-permissions.js';
 import {
   buildSharedHistoryComposite,
   loadSharedReportHistory,
@@ -53,7 +52,6 @@ function mapLink(row, proposal) {
     canEdit: Boolean(row.canEdit),
     canEditConfidential: Boolean(row.canEditConfidential),
     canReevaluate: Boolean(row.canReevaluate),
-    allowRecipientAiReview: getRecipientAiReviewEnabled(row),
     canSendBack: Boolean(row.canSendBack),
     expiresAt: row.expiresAt,
     maxUses: row.maxUses,

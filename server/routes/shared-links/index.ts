@@ -9,11 +9,6 @@ import { readJsonBody } from '../../_lib/http.js';
 import { newId, newToken } from '../../_lib/ids.js';
 import { appendProposalHistory } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
-import {
-  getRecipientAiReviewEnabled,
-  mergeRecipientAiReviewIntoReportMetadata,
-  readRecipientAiReviewEnabledFromBody,
-} from '../../_lib/shared-link-review-permissions.js';
 
 function buildSharedReportUrl(token: string) {
   const appBaseUrl = String(process.env.APP_BASE_URL || '').trim();
@@ -43,7 +38,6 @@ function mapLink(row, proposal) {
     canEdit: Boolean(row.canEdit),
     canEditConfidential: Boolean(row.canEditConfidential),
     canReevaluate: Boolean(row.canReevaluate),
-    allowRecipientAiReview: getRecipientAiReviewEnabled(row),
     canSendBack: Boolean(row.canSendBack),
     expiresAt: row.expiresAt,
     maxUses: row.maxUses,
@@ -145,7 +139,6 @@ export default async function handler(req: any, res: any) {
       body.canReevaluate === undefined && body.can_reevaluate === undefined
         ? false
         : Boolean(body.canReevaluate ?? body.can_reevaluate);
-    const allowRecipientAiReview = readRecipientAiReviewEnabledFromBody(body, false);
     const canSendBack = body.canSendBack === undefined ? true : Boolean(body.canSendBack);
 
     const maxUsesRaw = Number(body.maxUses || body.max_uses || 1);
@@ -184,10 +177,7 @@ export default async function handler(req: any, res: any) {
             lastUsedAt: null,
             expiresAt,
             idempotencyKey,
-            reportMetadata: mergeRecipientAiReviewIntoReportMetadata(
-              reportMetadata,
-              allowRecipientAiReview,
-            ),
+            reportMetadata,
             createdAt: now,
             updatedAt: now,
           })

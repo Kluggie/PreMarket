@@ -22,7 +22,6 @@ import {
   type MediationRoundContext,
 } from '../../../_lib/mediation-progress.js';
 import {
-  buildReviewContextHistoryState,
   buildDraftContributionEntries,
   buildSharedHistoryComposite,
   formatContributionsForAi,
@@ -50,7 +49,6 @@ import {
   PROMPT_TOKEN_HARD_CEILING,
   type ExchangeRoundSnapshot,
 } from '../../../_lib/evaluation-context-budget.js';
-import { buildMediationContextEstimate } from '../../../../src/lib/mediationContextLoad.js';
 import {
   DRAFT_STATUS,
   RECIPIENT_ROLE,
@@ -59,14 +57,9 @@ import {
   assertPayloadSize,
   buildDefaultConfidentialPayload,
   buildDefaultSharedPayload,
-  computeDraftContentHash,
-  extractPayloadText,
-  coercePayloadText,
   getCurrentRecipientDraft,
   getPayloadText,
-  getRecipientAiReviewStateForRound,
   getToken,
-  isSubstantiveRecipientAiReviewReport,
   logTokenEvent,
   mapRecipientSafeEvaluationDiagnostics,
   requireRecipientAuthorization,
@@ -82,10 +75,10 @@ import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewSta
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
-const RECIPIENT_EXTRA_AI_REVIEW_NOT_ENABLED_MESSAGE =
-  'The owner has not enabled an extra AI review for this link. You can still edit and send your response.';
+const ADDITIONAL_REREVIEW_NOT_ALLOWED_MESSAGE =
+  'This link does not allow additional AI re-reviews. You can still edit and send your response.';
 const RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE =
-  'An extra AI review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
+  'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
 
 function logEvaluationRuntime(
   context: any,
@@ -227,6 +220,25 @@ function toV2ApiError(error: any) {
     upstreamStatus: Number.isFinite(upstreamStatus) && upstreamStatus > 0 ? upstreamStatus : null,
     ...details,
   });
+}
+
+function coercePayloadHtml(payload: unknown, fallbackText = '') {
+  const source = toObject(payload);
+  const html = asText(source.html);
+  if (html) {
+    return sanitizeEditorHtml(html);
+  }
+  const text = getPayloadText(payload, fallbackText);
+  return sanitizeEditorHtml(text);
+}
+
+function coercePayloadText(payload: unknown, fallbackText = '') {
+  const text = getPayloadText(payload, fallbackText);
+  if (text) {
+    return sanitizeEditorText(text);
+  }
+  const html = coercePayloadHtml(payload, fallbackText);
+  return sanitizeEditorText(htmlToEditorText(html));
 }
 
 function buildConfidentialBundle(params: {
@@ -463,9 +475,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       proposal: resolved.proposal,
       link: resolved.link,
     });
-    // The current round number of this link (not the next round).
-    // For send-back's return link creation, nextRound = currentRound + 1 is handled separately.
-    const outgoingRoundNumber = resolveSharedReportLinkRound(resolved.link.reportMetadata);
+    const outgoingRoundNumber = resolveSharedReportLinkRound(resolved.link.reportMetadata) + 1;
 
     assertPayloadSize(sharedPayload, 'shared_payload');
     assertPayloadSize(confidentialPayload, 'recipient_confidential_payload');
@@ -473,10 +483,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const sharedFallbackText = String(resolved.comparison?.docBText || defaultSharedPayload.text || '');
     const currentRoundSharedText = coercePayloadText(sharedPayload, sharedFallbackText);
     const currentRoundRecipientConfidentialText = coercePayloadText(confidentialPayload, '');
-    const draftContentHash = computeDraftContentHash({
-      sharedText: currentRoundSharedText,
-      confidentialText: currentRoundRecipientConfidentialText,
-    });
     const sharedDraftContribution = evaluateMeaningfulPayloadContribution({
       payload: sharedPayload,
       baselinePayload: defaultSharedPayload,
@@ -545,7 +551,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     ];
     const sharedText = formatContributionsForAi(sharedHistoryEntriesForAi);
     const confidentialBundle = formatContributionsForAi(confidentialHistoryEntriesForAi);
-    const visibleSharedBundle = buildSharedHistoryComposite([
+    const sharedHtml = buildSharedHistoryComposite([
       ...sharedHistory.sharedEntries,
       ...draftSharedEntries.map((entry) => ({
         id: entry.id,
@@ -556,8 +562,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         source: entry.contentPayload?.source || 'typed',
         files: entry.contentPayload?.files || [],
       })),
-    ]);
-    const sharedHtml = visibleSharedBundle.html;
+    ]).html;
 
     // ── Exchange history: include previous rounds' shared text ──────────────
     const exchangeHistory = await getExchangeHistory(resolved.db, {
@@ -572,17 +577,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       sharedTextSnapshot:
         asText(sharedSnapshotByRound.get(Number(entry.round || 0))) || entry.sharedTextSnapshot,
     }));
-    const priorBilateralRounds = normalizedExchangeHistory.filter(
-      (entry) =>
-        entry.report &&
-        Number(entry.round || 0) > 0 &&
-        Number(entry.round || 0) < outgoingRoundNumber,
-    );
-    const reviewContextHistory = buildReviewContextHistoryState({
-      contributions: sharedHistory.contributions,
-      outgoingRoundNumber,
-      previousReviewsConsidered: priorBilateralRounds.length,
-    });
+    const priorBilateralRounds = normalizedExchangeHistory.filter((entry) => entry.report);
     const latestPriorBilateralRound = priorBilateralRounds[priorBilateralRounds.length - 1] || null;
     const baseMediationRoundContext = buildMediationRoundContext({
       bilateralRoundNumber: priorBilateralRounds.length + 1,
@@ -659,9 +654,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       sharedText,
       confidentialText: confidentialBundle,
     });
-    // Cache hit = exact same inputs already have a saved successful substantive
-    // AI result, so there is no model call and no owner review-credit usage.
-    const duplicateRuns = await resolved.db
+
+    // Cache hit = exact same inputs already have a saved successful AI result,
+    // so there is no model call and no owner review-credit usage.
+    const [duplicateRun] = await resolved.db
       .select()
       .from(schema.sharedReportEvaluationRuns)
       .where(
@@ -672,11 +668,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ),
       )
       .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
-      .limit(5);
-    const duplicateRun =
-      duplicateRuns.find((row: any) =>
-        isSubstantiveRecipientAiReviewReport(row?.resultPublicReport),
-      ) || null;
+      .limit(1);
 
     if (duplicateRun) {
       const duplicateResultJson = toObject(duplicateRun.resultJson);
@@ -728,53 +720,69 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       );
     }
 
-    // Cache miss = inputs changed or no saved substantive result exists.
-    // Before any model call or owner review-credit reservation, enforce the
-    // per-round policy:
-    // 1) the first recipient review is always allowed,
-    // 2) an additional review is only allowed after the first successful result,
-    // 3) the owner toggle only governs that one additional review.
-    const reviewState = await getRecipientAiReviewStateForRound(resolved.db, {
-      link: resolved.link,
-      outgoingRoundNumber,
-    });
-
-    if (reviewState.pendingRunCount > 0) {
-      throw new ApiError(
-        409,
-        'evaluation_already_running',
-        'AI mediation is already running for this draft.',
-        {
-          evaluation_id: reviewState.latestRunId,
-          revision_id: reviewState.latestRevisionId,
-          exchange_round: outgoingRoundNumber,
-          status: reviewState.latestStatus,
-        },
+    // Cache miss = inputs changed or no saved result exists. Before any model
+    // call or owner review-credit reservation, enforce the per-round policy:
+    // 1) first recipient review is allowed by default, and
+    // 2) only one additional non-cached re-review is allowed when enabled.
+    const [roundReviewCountRow] = await resolved.db
+      .select({
+        runCount: sql<number>`count(*)::int`,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(
+        and(
+          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
+          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+          inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
+          sql`${schema.sharedReportEvaluationRuns.resultJson}->'input_trace'->>'exchange_round' = ${String(outgoingRoundNumber)}`,
+        ),
       );
-    }
 
-    if (!reviewState.canRunInitialAiReview && !reviewState.extraAiReviewEnabled) {
+    const existingRoundRunCount = Number(roundReviewCountRow?.runCount || 0) || 0;
+
+    const [latestRoundReviewRun] = await resolved.db
+      .select({
+        id: schema.sharedReportEvaluationRuns.id,
+        revisionId: schema.sharedReportEvaluationRuns.revisionId,
+        status: schema.sharedReportEvaluationRuns.status,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(
+        and(
+          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
+          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+          inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
+          sql`${schema.sharedReportEvaluationRuns.resultJson}->'input_trace'->>'exchange_round' = ${String(outgoingRoundNumber)}`,
+        ),
+      )
+      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+      .limit(1);
+
+    if (existingRoundRunCount > 0 && !resolved.link.canReevaluate) {
       throw new ApiError(
         403,
-        'recipient_extra_ai_review_not_enabled',
-        RECIPIENT_EXTRA_AI_REVIEW_NOT_ENABLED_MESSAGE,
+        'reevaluation_not_allowed',
+        ADDITIONAL_REREVIEW_NOT_ALLOWED_MESSAGE,
         {
+          evaluation_id: latestRoundReviewRun?.id || null,
+          revision_id: latestRoundReviewRun?.revisionId || null,
           exchange_round: outgoingRoundNumber,
-          shared_link_id: resolved.link.id,
+          status: latestRoundReviewRun?.status || null,
         },
       );
     }
 
-    if (reviewState.extraAiReviewUsed) {
+    const additionalRoundReviewsUsed = Math.max(0, existingRoundRunCount - 1);
+    if (additionalRoundReviewsUsed >= 1) {
       throw new ApiError(
         409,
         'recipient_rereview_limit_reached',
         RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE,
         {
-          evaluation_id: reviewState.latestRunId,
-          revision_id: reviewState.latestRevisionId,
+          evaluation_id: latestRoundReviewRun?.id || null,
+          revision_id: latestRoundReviewRun?.revisionId || null,
           exchange_round: outgoingRoundNumber,
-          status: reviewState.latestStatus,
+          status: latestRoundReviewRun?.status || null,
         },
       );
     }
@@ -1018,50 +1026,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       });
 
       const completedAt = new Date();
-      const omittedDueToCapacity = [];
-      if (budgeted.budget.trimmedFromShared > 0) {
-        omittedDueToCapacity.push(`${budgeted.budget.trimmedFromShared.toLocaleString()} shared chars trimmed`);
-      }
-      if (budgeted.budget.trimmedFromConfidential > 0) {
-        omittedDueToCapacity.push(`${budgeted.budget.trimmedFromConfidential.toLocaleString()} confidential chars trimmed`);
-      }
-      if (Number(evaluationDiagnostics.omittedEvidenceCount || 0) > 0) {
-        omittedDueToCapacity.push(`${Number(evaluationDiagnostics.omittedEvidenceCount || 0).toLocaleString()} retrieved chunks omitted`);
-      }
-      if (Boolean(v2Preflight.trimTriggered)) {
-        omittedDueToCapacity.push('prompt tightened during token preflight');
-      }
-
-      // Compute content hash for freshness tracking
-      const draftContentHash = computeDraftContentHash({
-        sharedText: currentRoundSharedText,
-        confidentialText: currentRoundRecipientConfidentialText,
-      });
-
-      const reviewContextEstimate = buildMediationContextEstimate({
-        visibleSharedText: visibleSharedBundle.text || '',
-        visibleConfidentialText: currentRoundRecipientConfidentialText,
-        directSharedText: evaluationSharedText,
-        directConfidentialText: evaluationConfidentialText,
-        priorRoundText: formatContributionsForAi(reviewContextHistory.priorRoundEntries),
-        summaryMemoryText: [
-          convergenceDigest?.digestText || '',
-          priorBilateralRounds.length > 0 && mediationRoundContext ? JSON.stringify(mediationRoundContext) : '',
-        ].filter(Boolean).join('\n'),
-        retrievedChunkCount: Number(evaluationDiagnostics.evidenceCount || 0),
-        retrievedContextTokens: Number(evaluationDiagnostics.evidenceBudgetUsed || 0),
-        initialProposalContextIncluded: reviewContextHistory.initialProposalContextIncluded,
-        priorRoundsConsidered: reviewContextHistory.priorRoundsConsidered,
-        previousReviewsConsidered: reviewContextHistory.previousReviewsConsidered,
-        omittedDueToCapacity,
-        estimatorMode: 'evaluate_runtime',
-      });
-      if (process.env.NODE_ENV !== 'production') {
-        logEvaluationRuntime(context, 'review_context_estimate', {
-          evaluationId: evaluationRunId,
-          contextEstimate: reviewContextEstimate,
-        });
-      }
       const completedEvaluationDiagnostics = {
         ...evaluationDiagnostics,
         evaluatorElapsedMs: Date.now() - evaluatorStartedAt,
@@ -1108,7 +1072,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               convergence_digest_chars: convergenceDigest?.digestChars || 0,
               convergence_open_questions: convergenceDigest?.openQuestions?.length || 0,
               convergence_resolved_questions: convergenceDigest?.resolvedQuestions?.length || 0,
-              context_estimate: reviewContextEstimate,
             },
             review_idempotency_key: reviewIdempotencyKey,
             exchange_history: normalizedExchangeHistory.map((round) => ({
@@ -1142,7 +1105,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               text: sharedText,
               html: sharedHtml,
             },
-            draft_content_hash: draftContentHash,
           },
           errorCode: null,
           errorMessage: null,

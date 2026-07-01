@@ -35,9 +35,6 @@ import {
   SHARED_REPORT_ROUTE,
   SUPERSEDED_STATUS,
   asText,
-  computeDraftContentHash,
-  coercePayloadText,
-  extractPayloadText,
   getCurrentRecipientDraft,
   getPayloadText,
   getToken,
@@ -369,6 +366,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       .orderBy(desc(schema.sharedReportEvaluationRuns.updatedAt))
       .limit(1);
 
+    const publicReport = toObject(latestEvaluation?.resultPublicReport);
+    const evaluationResult = toObject((latestEvaluation?.resultJson as any)?.evaluation_result);
+    const evaluationScore = toScoreFromPublicReport(publicReport);
     const stableAuthorRole =
       getLinkRecipientAuthorRole({
         proposal: resolved.proposal,
@@ -391,24 +391,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     );
     const updatedSharedText = extractSharedText(sentSharedPayload);
     const updatedConfidentialText = extractSharedText(sentConfidentialPayload);
-
-    // Check if the evaluation is fresh (content matches current draft)
-    let isEvaluationCurrent = false;
-    if (latestEvaluation) {
-      const sentSharedText = coercePayloadText(sentSharedPayload, '');
-      const sentConfidentialText = coercePayloadText(sentConfidentialPayload, '');
-      const currentContentHash = computeDraftContentHash({
-        sharedText: sentSharedText,
-        confidentialText: sentConfidentialText,
-      });
-      const evaluationResultJson = toObject(latestEvaluation?.resultJson);
-      const storedContentHash = asText(evaluationResultJson?.draft_content_hash || '');
-      isEvaluationCurrent = storedContentHash && storedContentHash === currentContentHash;
-    }
-
-    const publicReport = isEvaluationCurrent ? toObject(latestEvaluation?.resultPublicReport) : {};
-    const evaluationResult = isEvaluationCurrent ? toObject((latestEvaluation?.resultJson as any)?.evaluation_result) : {};
-    const evaluationScore = isEvaluationCurrent ? toScoreFromPublicReport(publicReport) : null;
 
     await recordSharedReportContributionGroup({
       db: resolved.db,
@@ -588,7 +570,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         reportMetadata: {
           workflow: 'single_shared_report',
           comparison_id: comparisonId || null,
-          allow_recipient_ai_review: false,
           exchange_round: nextRound,
           parent_link_id: resolved.link.id,
           parent_token: token,
@@ -663,12 +644,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       status: SENT_STATUS,
       sent_at: now,
       evaluation_id: latestEvaluation?.id || null,
-      public_report: publicReport || null,
-      comparison: isEvaluationCurrent ? {
-        evaluation_result: {
-          report: evaluationResult || null,
-        },
-      } : null,
       return_link: returnLinkToken
         ? {
             token: returnLinkToken,

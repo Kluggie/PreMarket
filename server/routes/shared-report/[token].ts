@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
@@ -7,34 +7,12 @@ import { ApiError } from '../../_lib/errors.js';
 import { buildSharedReportScopedActivityHistory } from '../../_lib/proposal-activity.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
-  buildReviewContextHistoryState,
-  buildDraftContributionEntries,
-  buildSharedHistoryComposite,
-  formatContributionsForAi,
   getLinkRecipientAuthorRole,
   loadSharedReportHistory,
   resolveSharedReportLinkRound,
 } from '../../_lib/shared-report-history.js';
-import { evaluateMeaningfulPayloadContribution } from '../../_lib/meaningful-recipient-contribution.js';
-import {
-  buildMediationRoundContext,
-  enrichMediationRoundContext,
-  extractMediationReport,
-} from '../../_lib/mediation-progress.js';
-import {
-  buildEvidenceCandidatesFromContributions,
-  buildPriorMediationEvidenceCandidate,
-} from '../../_lib/mediation-evidence-retrieval.js';
-import {
-  buildBudgetedContext,
-  buildConvergenceDigest,
-} from '../../_lib/evaluation-context-budget.js';
 import { mapProposalOutcomeForUser } from '../../_lib/proposal-outcomes.js';
 import { getProposalThreadState } from '../../_lib/proposal-thread-state.js';
-import {
-  buildMediationContextEstimate,
-  estimateRetrievedContextFromCandidates,
-} from '../../../src/lib/mediationContextLoad.js';
 import {
   asText,
   buildDefaultConfidentialPayload,
@@ -42,12 +20,8 @@ import {
   buildDefaultSharedPayload,
   buildLatestReport,
   buildParentView,
-  buildShareViewWithReviewState,
-  computeDraftContentHash,
-  extractPayloadText,
+  buildShareView,
   getCurrentRecipientDraft,
-  getPayloadText,
-  getRecipientAiReviewStateForRound,
   getLatestRecipientEvaluationRun,
   getLatestRecipientSentRevision,
   getToken,
@@ -55,7 +29,6 @@ import {
   mapEvaluationRunView,
   mapDraftView,
   getRecipientAuthorizationState,
-  getAiReviewFreshnessForDraft,
   resolveSharedReportToken,
   toObject,
 } from './_shared.js';
@@ -180,69 +153,6 @@ function buildLineageScopeFromLinks(links: any[], comparisonId: string) {
   };
 }
 
-const MAX_HISTORY_ROUNDS = 4;
-
-async function getExchangeHistory(
-  db: any,
-  params: {
-    proposalId: string;
-    comparisonId?: string | null;
-  },
-) {
-  const conditions = [
-    eq(schema.sharedReportEvaluationRuns.proposalId, params.proposalId),
-    eq(schema.sharedReportEvaluationRuns.actorRole, 'recipient'),
-    eq(schema.sharedReportEvaluationRuns.status, 'success'),
-  ];
-  if (params.comparisonId) {
-    conditions.push(eq(schema.sharedReportEvaluationRuns.comparisonId, params.comparisonId));
-  }
-
-  const runs = await db
-    .select({
-      id: schema.sharedReportEvaluationRuns.id,
-      resultJson: schema.sharedReportEvaluationRuns.resultJson,
-      createdAt: schema.sharedReportEvaluationRuns.createdAt,
-    })
-    .from(schema.sharedReportEvaluationRuns)
-    .where(and(...conditions))
-    .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
-    .limit(MAX_HISTORY_ROUNDS + 1);
-
-  const ordered = runs.reverse();
-  const trimmed = ordered.length > MAX_HISTORY_ROUNDS
-    ? ordered.slice(ordered.length - MAX_HISTORY_ROUNDS)
-    : ordered;
-
-  return trimmed.map((run: any, index: number) => {
-    const json = toObject(run.resultJson);
-    const snapshot = toObject(json?.shared_snapshot);
-    const inputTrace = toObject(json?.input_trace);
-    const evalResult = toObject(json?.evaluation_result);
-    const evalReport = toObject(evalResult?.report);
-    const missingSource = Array.isArray(evalReport?.missing)
-      ? evalReport.missing
-      : Array.isArray(evalResult?.missing)
-        ? evalResult.missing
-        : [];
-    const missingQuestions = missingSource
-      .map((entry: any) => asText(entry?.text ?? entry))
-      .filter(Boolean);
-    const roundNumber = Number(inputTrace?.exchange_round || 0);
-
-    return {
-      round: Number.isFinite(roundNumber) && roundNumber >= 1 ? Math.floor(roundNumber) : index + 1,
-      evaluationRunId: asText(run.id),
-      sharedTextSnapshot: asText(snapshot?.text),
-      sharedTextLength: Number(inputTrace?.shared_length || 0) || 0,
-      confidentialLength: Number(inputTrace?.confidential_length || 0) || 0,
-      missingQuestions,
-      report: extractMediationReport(evalReport),
-      createdAt: run.createdAt,
-    };
-  });
-}
-
 export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, SHARED_REPORT_ROUTE, async (context) => {
     ensureMethod(req, ['GET']);
@@ -274,8 +184,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       token,
       consumeView: true,
     });
-    const currentLinkRound = resolveSharedReportLinkRound(resolved.link.reportMetadata);
-    const activeRoundNumber = currentLinkRound + 1;
     const lineageLinks = await loadSharedReportLinkLineage(resolved.db, resolved.link);
     const comparisonId = asText(resolved.comparison?.id || resolved.proposal?.documentComparisonId);
     const lineageScope = buildLineageScopeFromLinks(lineageLinks, comparisonId);
@@ -288,7 +196,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       activityEvents,
       lineageRevisionRows,
       lineageEvaluationRows,
-      recipientAiReviewState,
     ] = await Promise.all([
       getCurrentRecipientDraft(resolved.db, resolved.link.id),
       getLatestRecipientEvaluationRun(resolved.db, resolved.link.id),
@@ -349,20 +256,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             .from(schema.sharedReportEvaluationRuns)
             .where(inArray(schema.sharedReportEvaluationRuns.sharedLinkId, lineageScope.lineageLinkIds))
         : Promise.resolve([]),
-      getRecipientAiReviewStateForRound(resolved.db, {
-        link: resolved.link,
-        outgoingRoundNumber: activeRoundNumber,
-      }),
     ]);
     const currentUserId = asText(currentUser?.id || currentUser?.sub);
     const proposalOwnerUserId = asText(resolved.proposal?.userId);
-
-    // Compute AI review freshness state
-    const recipientAiReviewFreshness = await getAiReviewFreshnessForDraft(resolved.db, {
-      link: resolved.link,
-      currentDraft,
-    });
-
     const activityAccessMode =
       currentUserId && proposalOwnerUserId
         ? currentUserId === proposalOwnerUserId
@@ -396,10 +292,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ),
       },
     });
+    const currentLinkRound = resolveSharedReportLinkRound(resolved.link.reportMetadata);
     const draftAuthorRole = getLinkRecipientAuthorRole({
       proposal: resolved.proposal,
       link: resolved.link,
     });
+    const activeRoundNumber = currentLinkRound + 1;
 
     if (process.env.NODE_ENV !== 'production') {
       console.info(
@@ -464,14 +362,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           outcome: parentOutcome,
         })
       : null;
-    const shareView: any = buildShareViewWithReviewState(resolved.link, {
-      ...recipientAiReviewState,
-      hasCurrentAiReview: recipientAiReviewFreshness.hasCurrentReview,
-      hasStaleAiReview: recipientAiReviewFreshness.hasStaleReview,
-      canRunExtraAiReview: recipientAiReviewFreshness.canRunExtraReview,
-      staleReviewEvaluationId: recipientAiReviewFreshness.staleReviewEvaluationId,
-      currentReviewEvaluationId: recipientAiReviewFreshness.currentReviewEvaluationId,
-    });
+    const shareView: any = buildShareView(resolved.link);
     const isAuthenticated = Boolean(currentUser);
     const canViewAuthorizationDetails = Boolean(isAuthenticated && recipientAuthorization.aliasVerifiedMatch);
 
@@ -501,169 +392,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       requires_verification: recipientAuthorization.requiresVerification,
     };
 
-    const effectiveDraft = currentDraft || {
-      sharedPayload: baselineSharedPayload,
-      recipientConfidentialPayload: defaults.recipient_confidential_payload,
-      createdAt: null,
-      updatedAt: null,
-    };
-    const sharedPayload = toObject(effectiveDraft.sharedPayload || baselineSharedPayload);
-    const confidentialPayload = toObject(
-      effectiveDraft.recipientConfidentialPayload || defaults.recipient_confidential_payload,
-    );
-    const outgoingRoundNumber = currentLinkRound + 1;
-    const sharedFallbackText = asText(baselineSharedPayload?.text);
-    const currentRoundSharedText = getPayloadText(sharedPayload, sharedFallbackText);
-    const currentRoundConfidentialText = getPayloadText(confidentialPayload, '');
-    const sharedDraftContribution = evaluateMeaningfulPayloadContribution({
-      payload: sharedPayload,
-      baselinePayload: baselineSharedPayload,
-      defaultLabel: 'Shared by Recipient',
-      visibility: 'shared',
-    });
-    const confidentialDraftContribution = evaluateMeaningfulPayloadContribution({
-      payload: confidentialPayload,
-      baselinePayload: defaults.recipient_confidential_payload,
-      defaultLabel: 'Confidential to Recipient',
-      visibility: 'confidential',
-    });
-    const draftEntries = buildDraftContributionEntries({
-      authorRole: draftAuthorRole,
-      roundNumber: outgoingRoundNumber,
-      sharedPayload,
-      confidentialPayload,
-      sourceKind: 'draft',
-      createdAt: effectiveDraft.createdAt || null,
-      updatedAt: effectiveDraft.updatedAt || null,
-    });
-    const draftSharedEntries = draftEntries.filter(
-      (entry: any) => entry.visibility === 'shared' && sharedDraftContribution.hasMeaningfulContribution,
-    );
-    const draftConfidentialEntries = draftEntries.filter(
-      (entry: any) =>
-        entry.visibility === 'confidential' && confidentialDraftContribution.hasMeaningfulContribution,
-    );
-    const sharedHistoryEntriesForAi = [
-      ...sharedHistory.contributions.filter((entry: any) => entry.visibility === 'shared'),
-      ...draftSharedEntries,
-    ];
-    const confidentialHistoryEntriesForAi = [
-      ...sharedHistory.contributions.filter((entry: any) => entry.visibility === 'confidential'),
-      ...draftConfidentialEntries,
-    ];
-    const sharedText = formatContributionsForAi(sharedHistoryEntriesForAi);
-    const confidentialText = formatContributionsForAi(confidentialHistoryEntriesForAi);
-    const visibleSharedBundle = buildSharedHistoryComposite([
-      ...sharedHistory.sharedEntries,
-      ...draftSharedEntries.map((entry: any) => ({
-        id: entry.id,
-        visibility_label: `Shared by ${entry.authorLabel}`,
-        label: entry.contentPayload?.label || `Shared by ${entry.authorLabel}`,
-        text: entry.contentPayload?.text || '',
-        html: entry.contentPayload?.html || '',
-        source: entry.contentPayload?.source || 'typed',
-        files: entry.contentPayload?.files || [],
-      })),
-    ]);
-    const exchangeHistory = await getExchangeHistory(resolved.db, {
-      proposalId: resolved.proposal.id,
-      comparisonId: resolved.comparison?.id || null,
-    });
-    const sharedSnapshotByRound = new Map(
-      sharedHistory.sharedRoundSnapshots.map((entry: any) => [Number(entry.round || 0), entry.sharedTextSnapshot]),
-    );
-    const normalizedExchangeHistory = exchangeHistory.map((entry: any) => ({
-      ...entry,
-      sharedTextSnapshot:
-        asText(sharedSnapshotByRound.get(Number(entry.round || 0))) || entry.sharedTextSnapshot,
-    }));
-    const priorBilateralRounds = normalizedExchangeHistory.filter((entry: any) => entry.report);
-    const reviewContextHistory = buildReviewContextHistoryState({
-      contributions: sharedHistory.contributions,
-      outgoingRoundNumber,
-      previousReviewsConsidered: priorBilateralRounds.length,
-    });
-    const latestPriorBilateralRound = priorBilateralRounds[priorBilateralRounds.length - 1] || null;
-    const baseMediationRoundContext = buildMediationRoundContext({
-      bilateralRoundNumber: priorBilateralRounds.length + 1,
-      priorBilateralRoundId: latestPriorBilateralRound?.evaluationRunId || null,
-      priorReport: latestPriorBilateralRound?.report || null,
-    });
-    const mediationRoundContext = enrichMediationRoundContext({
-      mediationRoundContext: baseMediationRoundContext,
-      currentSharedText: currentRoundSharedText,
-    }) || baseMediationRoundContext;
-    const priorEvalSnapshots = normalizedExchangeHistory.map((entry: any) => ({
-      round: entry.round,
-      sharedTextSnapshot: entry.sharedTextSnapshot,
-      missingQuestions: entry.missingQuestions || [],
-      createdAt: entry.createdAt,
-    }));
-    const convergenceDigest = buildConvergenceDigest(priorEvalSnapshots, sharedText);
-    const budgeted = buildBudgetedContext({
-      currentSharedText: sharedText,
-      confidentialText,
-      historyRounds: [],
-      priorEvaluationRounds: priorEvalSnapshots,
-    });
-    const retrievalCandidates = [
-      ...buildEvidenceCandidatesFromContributions(
-        reviewContextHistory.priorRoundEntries,
-      ),
-      ...priorBilateralRounds
-        .map((round: any) =>
-          buildPriorMediationEvidenceCandidate({
-            id: round.evaluationRunId,
-            roundNumber: round.round,
-            report: round.report,
-            createdAt: round.createdAt,
-          }),
-        )
-        .filter(Boolean),
-    ];
-    const retrievedEstimate = estimateRetrievedContextFromCandidates(retrievalCandidates);
-    const omittedDueToCapacity = [];
-    if (budgeted.budget.trimmedFromShared > 0) {
-      omittedDueToCapacity.push(`${budgeted.budget.trimmedFromShared.toLocaleString()} shared chars trimmed`);
-    }
-    if (budgeted.budget.trimmedFromConfidential > 0) {
-      omittedDueToCapacity.push(`${budgeted.budget.trimmedFromConfidential.toLocaleString()} confidential chars trimmed`);
-    }
-    if (retrievedEstimate.omittedRetrievedChunkCount > 0) {
-      omittedDueToCapacity.push(`${retrievedEstimate.omittedRetrievedChunkCount.toLocaleString()} retrieved chunks omitted`);
-    }
-    const reviewContextEstimate = buildMediationContextEstimate({
-      visibleSharedText: visibleSharedBundle.text || '',
-      visibleConfidentialText: currentRoundConfidentialText,
-      directSharedText: budgeted.sharedText,
-      directConfidentialText: budgeted.confidentialText,
-      priorRoundText: formatContributionsForAi(reviewContextHistory.priorRoundEntries),
-      summaryMemoryText: [
-        convergenceDigest?.digestText || '',
-        priorBilateralRounds.length > 0 && mediationRoundContext ? JSON.stringify(mediationRoundContext) : '',
-      ].filter(Boolean).join('\n'),
-      retrievedChunkCount: retrievedEstimate.retrievedChunkCount,
-      retrievedContextTokens: retrievedEstimate.retrievedContextTokens,
-      initialProposalContextIncluded: reviewContextHistory.initialProposalContextIncluded,
-      priorRoundsConsidered: reviewContextHistory.priorRoundsConsidered,
-      previousReviewsConsidered: reviewContextHistory.previousReviewsConsidered,
-      omittedDueToCapacity,
-      estimatorMode: 'workspace_preflight',
-    });
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.info(
-        JSON.stringify({
-          level: 'info',
-          route: 'shared-report/[token]',
-          event: 'workspace_review_context_estimate',
-          comparisonId: resolved.comparison?.id || null,
-          proposalId: resolved.proposal?.id || null,
-          reviewContextEstimate,
-        }),
-      );
-    }
-
     ok(res, 200, {
       share: shareView,
       parent: buildParentView({
@@ -690,7 +418,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       },
       baseline_shared: baselineSharedPayload,
       baseline_ai_report: baselineAiReport,
-      review_context_estimate: reviewContextEstimate,
       shared_history: {
         entries: sharedHistory.sharedEntries,
         confidential_entries: visibleConfidentialHistoryEntries,
