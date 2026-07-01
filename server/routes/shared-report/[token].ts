@@ -1,4 +1,4 @@
-import { desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
@@ -7,16 +7,39 @@ import { ApiError } from '../../_lib/errors.js';
 import { buildSharedReportScopedActivityHistory } from '../../_lib/proposal-activity.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
+  buildReviewContextHistoryState,
+  buildDraftContributionEntries,
+  buildSharedHistoryComposite,
+  formatContributionsForAi,
   getLinkRecipientAuthorRole,
   loadSharedReportHistory,
   resolveSharedReportLinkRound,
 } from '../../_lib/shared-report-history.js';
+import {
+  buildBudgetedContext,
+  buildConvergenceDigest,
+  MAX_HISTORY_ROUNDS,
+} from '../../_lib/evaluation-context-budget.js';
+import {
+  buildEvidenceCandidatesFromContributions,
+  buildPriorMediationEvidenceCandidate,
+} from '../../_lib/mediation-evidence-retrieval.js';
+import {
+  buildMediationRoundContext,
+  enrichMediationRoundContext,
+  extractMediationReport,
+} from '../../_lib/mediation-progress.js';
+import {
+  buildMediationContextEstimate,
+  estimateRetrievedContextFromCandidates,
+} from '../../../src/lib/mediationContextLoad.js';
 import { mapProposalOutcomeForUser } from '../../_lib/proposal-outcomes.js';
 import { getProposalThreadState } from '../../_lib/proposal-thread-state.js';
 import {
   asText,
   buildDefaultConfidentialPayload,
   SHARED_REPORT_ROUTE,
+  RECIPIENT_ROLE,
   buildDefaultSharedPayload,
   buildLatestReport,
   buildParentView,
@@ -24,6 +47,7 @@ import {
   getCurrentRecipientDraft,
   getLatestRecipientEvaluationRun,
   getLatestRecipientSentRevision,
+  getPayloadText,
   getToken,
   logTokenEvent,
   mapEvaluationRunView,
@@ -151,6 +175,81 @@ function buildLineageScopeFromLinks(links: any[], comparisonId: string) {
     lineageRecipientEmails,
     lineageComparisonIds,
   };
+}
+
+interface ExchangeHistoryRound {
+  round: number;
+  evaluationRunId: string;
+  sharedTextSnapshot: string;
+  sharedTextLength: number;
+  confidentialLength: number;
+  /** Prior missing[] questions extracted from the evaluation result. */
+  missingQuestions: string[];
+  report: Record<string, unknown> | null;
+  createdAt: Date | string;
+}
+
+async function getExchangeHistory(
+  db: any,
+  params: {
+    proposalId: string;
+    comparisonId?: string | null;
+  },
+): Promise<ExchangeHistoryRound[]> {
+  const conditions = [
+    eq(schema.sharedReportEvaluationRuns.proposalId, params.proposalId),
+    eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+    eq(schema.sharedReportEvaluationRuns.status, 'success'),
+  ];
+  if (params.comparisonId) {
+    conditions.push(eq(schema.sharedReportEvaluationRuns.comparisonId, params.comparisonId));
+  }
+  const runs = await db
+    .select({
+      id: schema.sharedReportEvaluationRuns.id,
+      resultJson: schema.sharedReportEvaluationRuns.resultJson,
+      createdAt: schema.sharedReportEvaluationRuns.createdAt,
+    })
+    .from(schema.sharedReportEvaluationRuns)
+    .where(and(...conditions))
+    .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+    .limit(MAX_HISTORY_ROUNDS + 1); // +1 to trim last after reversing
+
+  // Reverse to oldest-first and drop the oldest if over MAX_HISTORY_ROUNDS
+  const ordered = runs.reverse();
+  const trimmed = ordered.length > MAX_HISTORY_ROUNDS
+    ? ordered.slice(ordered.length - MAX_HISTORY_ROUNDS)
+    : ordered;
+
+  return trimmed.map((run: any, index: number) => {
+    const json = toObject(run.resultJson);
+    const snapshot = toObject(json?.shared_snapshot);
+    const inputTrace = toObject(json?.input_trace);
+    // Extract prior missing[] questions for convergence tracking
+    const evalResult = toObject(json?.evaluation_result);
+    const evalReport = toObject(evalResult?.report);
+    const missingQuestions: string[] = [];
+    const missingSource = Array.isArray(evalReport?.missing)
+      ? evalReport.missing
+      : Array.isArray(evalResult?.missing)
+        ? evalResult.missing
+        : [];
+    for (const entry of missingSource) {
+      const text = asText(entry?.text ?? entry);
+      if (text) missingQuestions.push(text);
+    }
+    const roundNumber = Number(inputTrace?.exchange_round || 0);
+    return {
+      round: Number.isFinite(roundNumber) && roundNumber >= 1 ? Math.floor(roundNumber) : index + 1,
+      evaluationRunId: run.id,
+      sharedTextSnapshot: asText(snapshot?.text),
+      sharedTextLength: Number(inputTrace?.shared_length || 0) || 0,
+      confidentialLength: Number(inputTrace?.confidential_length || 0) || 0,
+      missingQuestions,
+      report: extractMediationReport(evalReport),
+      createdAt: run.createdAt,
+    };
+  });
 }
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
@@ -392,6 +491,76 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       requires_verification: recipientAuthorization.requiresVerification,
     };
 
+    // Build AI context-load estimate
+    const exchangeHistory = await getExchangeHistory(resolved.db, {
+      proposalId: resolved.proposal.id,
+      comparisonId: comparisonId,
+    });
+
+    const reviewContextHistory = buildReviewContextHistoryState({
+      contributions: sharedHistory.sharedEntries || [],
+      outgoingRoundNumber: currentLinkRound,
+      previousReviewsConsidered: exchangeHistory.length,
+    });
+
+    const priorEvalSnapshots = [];
+    for (const round of exchangeHistory) {
+      if (round.report) {
+        priorEvalSnapshots.push({
+          roundNumber: round.round,
+          report: round.report,
+        });
+      }
+    }
+
+    const retrievalCandidates = [
+      ...buildEvidenceCandidatesFromContributions({
+        contributions: sharedHistory.sharedEntries || [],
+        currentRound: currentLinkRound,
+        recipientRole: draftAuthorRole,
+      }),
+    ];
+
+    for (const round of exchangeHistory) {
+      if (round.report) {
+        retrievalCandidates.push(
+          buildPriorMediationEvidenceCandidate({
+            roundNumber: round.round,
+            report: round.report,
+          }),
+        );
+      }
+    }
+
+    const retrievedEstimate = estimateRetrievedContextFromCandidates({
+      candidates: retrievalCandidates,
+    });
+
+    const reviewContextEstimate = buildMediationContextEstimate({
+      visibleSharedText: getPayloadText(baselineSharedPayload),
+      visibleConfidentialText: asText(
+        visibleConfidentialHistoryEntries
+          .map((entry: any) => asText(entry?.notes || entry?.text))
+          .join('\n\n'),
+      ),
+      directSharedText: asText(resolved.proposal?.text || ''),
+      directConfidentialText: '',
+      priorRoundText: sharedHistory.sharedEntries
+        ?.filter((entry: any) => {
+          const round = coercePositiveInt(entry?.roundNumber);
+          return round !== null && round > 1 && round < currentLinkRound;
+        })
+        ?.map((entry: any) => asText(entry?.text))
+        ?.join('\n\n') || '',
+      summaryMemoryText: '',
+      retrievedChunkCount: retrievalCandidates.length,
+      retrievedContextTokens: retrievedEstimate.estimatedTokens || 0,
+      initialProposalContextIncluded: Boolean(resolved.proposal),
+      priorRoundsConsidered: reviewContextHistory.priorRoundsConsidered,
+      previousReviewsConsidered: reviewContextHistory.previousReviewsConsidered,
+      omittedDueToCapacity: retrievedEstimate.omitted || [],
+    });
+
     ok(res, 200, {
       share: shareView,
       parent: buildParentView({
@@ -437,6 +606,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       recipientDraft: mapDraftView(currentDraft),
       currentDraft: mapDraftView(currentDraft),
       latestSentRevision: mapDraftView(latestSentRevision),
+      review_context_estimate: reviewContextEstimate,
       defaults,
     });
 

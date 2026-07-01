@@ -645,6 +645,7 @@ export default function SharedReport() {
   const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
   const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
   const latestSentRevision = workspaceQuery.data?.latestSentRevision || null;
+  const reviewContextEstimate = workspaceQuery.data?.review_context_estimate || null;
   const baselineReviewReportForDownloads =
     baseline?.ai_report ||
     workspaceQuery.data?.baselineAiReport ||
@@ -3410,6 +3411,7 @@ export default function SharedReport() {
               finishStage={step3IsEvaluationRunning ? 'evaluating' : 'idle'}
               exceedsAnySizeLimit={false}
               saveDraftPending={saveDraftMutation.isPending}
+              reviewContextEstimate={reviewContextEstimate}
               evaluationFailureMessage={
                 isGenerationFailureFallback(updatedRecipientReport)
                   ? 'The AI mediation brief could not be completed. No substantive mediation result was produced. Please retry.'
