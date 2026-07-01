@@ -497,9 +497,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       comparisonId: comparisonId,
     });
 
+    // Normalize shared entries to have roundNumber field for context history calculation
+    const normalizedSharedEntries = (sharedHistory.sharedEntries || []).map((entry: any) => ({
+      ...entry,
+      roundNumber: entry.round_number || entry.roundNumber,
+    }));
+
     const reviewContextHistory = buildReviewContextHistoryState({
-      contributions: sharedHistory.sharedEntries || [],
-      outgoingRoundNumber: currentLinkRound,
+      contributions: normalizedSharedEntries,
+      outgoingRoundNumber: activeRoundNumber,
       previousReviewsConsidered: exchangeHistory.length,
     });
 
@@ -547,8 +553,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       directConfidentialText: '',
       priorRoundText: sharedHistory.sharedEntries
         ?.filter((entry: any) => {
-          const round = coercePositiveInt(entry?.roundNumber);
-          return round !== null && round > 1 && round < currentLinkRound;
+          const round = coercePositiveInt(entry?.round_number || entry?.roundNumber);
+          return round !== null && round > 1 && round < activeRoundNumber;
         })
         ?.map((entry: any) => asText(entry?.text))
         ?.join('\n\n') || '',
