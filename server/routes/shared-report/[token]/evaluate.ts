@@ -463,7 +463,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       proposal: resolved.proposal,
       link: resolved.link,
     });
-    const outgoingRoundNumber = resolveSharedReportLinkRound(resolved.link.reportMetadata) + 1;
+    // The current round number of this link (not the next round).
+    // For send-back's return link creation, nextRound = currentRound + 1 is handled separately.
+    const outgoingRoundNumber = resolveSharedReportLinkRound(resolved.link.reportMetadata);
 
     assertPayloadSize(sharedPayload, 'shared_payload');
     assertPayloadSize(confidentialPayload, 'recipient_confidential_payload');
