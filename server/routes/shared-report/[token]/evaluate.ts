@@ -72,14 +72,11 @@ import {
   releaseAiMediationReviewReservation,
   reserveAiMediationReviewCredit,
 } from '../../../_lib/starter-entitlements.js';
-import { getRecipientAiReviewEnabled } from '../../../_lib/shared-link-review-permissions.js';
 import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewStage.js';
 
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
-const RECIPIENT_AI_REVIEW_NOT_ENABLED_MESSAGE =
-  'The owner has not enabled extra AI review for this link. You can still edit and send your response.';
 const RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE =
   'An extra AI review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
 
@@ -663,19 +660,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       sharedText,
       confidentialText: confidentialBundle,
     });
-    const recipientAiReviewEnabled = getRecipientAiReviewEnabled(resolved.link);
-
-    if (!recipientAiReviewEnabled) {
-      throw new ApiError(
-        403,
-        'recipient_ai_review_not_enabled',
-        RECIPIENT_AI_REVIEW_NOT_ENABLED_MESSAGE,
-        {
-          exchange_round: outgoingRoundNumber,
-          shared_link_id: resolved.link.id,
-        },
-      );
-    }
 
     // Cache hit = exact same inputs already have a saved successful AI result,
     // so there is no model call and no owner review-credit usage.
