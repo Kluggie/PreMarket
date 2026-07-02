@@ -146,8 +146,11 @@ function BundleSection({ label, icon, colorClass, borderClass, bgClass, sourceDo
  *   exceedsAnySizeLimit     boolean
  *   saveDraftPending        boolean
  *   evaluationFailureMessage string
+ *   isReviewLocked          boolean - true when AI review is complete and package is locked
  *   onBack                  () => void
  *   onRunEvaluation         () => void
+ *   onSendBack              () => void - callback to send locked reviewed package
+ *   counterpartyName        string - name to show in "Send to [name]"
  */
 export default function Step3ReviewPackage({
   documents = [],
@@ -158,8 +161,11 @@ export default function Step3ReviewPackage({
   finishStage = 'idle',
   exceedsAnySizeLimit = false,
   saveDraftPending = false,
+  isReviewLocked = false,
   onBack,
   onRunEvaluation,
+  onSendBack,
+  counterpartyName = 'counterparty',
   actionSlot = null,
   runActionLabel = '',
   runActionTestId = 'step2-run-evaluation-button',
@@ -226,10 +232,15 @@ export default function Step3ReviewPackage({
       {/* Overview card */}
       <Card>
         <CardHeader>
-          <CardTitle>Final Review Before Mediation</CardTitle>
+          <CardTitle>
+            {isReviewLocked ? 'Response Package Reviewed and Locked' : 'Final Review Before Mediation'}
+          </CardTitle>
           <CardDescription>
-            Review the visible Shared and Confidential bundles before running AI mediation.
-            AI context load below also estimates baseline proposal context, later-round history, prior review summaries, and retrieved supporting context when available.
+            {isReviewLocked ? (
+              'This response package has been reviewed and is now locked. Send it back to continue the negotiation.'
+            ) : (
+              'Review the visible Shared and Confidential bundles before running AI mediation. AI context load below also estimates baseline proposal context, later-round history, prior review summaries, and retrieved supporting context when available.'
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -503,9 +514,19 @@ export default function Step3ReviewPackage({
           data-testid="step3-back-button"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          {backLabel}
+          {isReviewLocked ? 'Back' : backLabel}
         </Button>
-        {actionSlot || (
+        {isReviewLocked ? (
+          <Button
+            type="button"
+            onClick={onSendBack}
+            disabled={isRunning}
+            className={actionButtonClassName}
+            data-testid="step3-send-button"
+          >
+            Send to {counterpartyName}
+          </Button>
+        ) : actionSlot || (
           showRunAction ? (
             <Button
               type="button"

@@ -481,7 +481,9 @@ async function getLatestRecipientConfidentialText(db: any, comparisonId: string)
   }
 
   const [latest] = await db
-    .select()
+    .select({
+      recipientConfidentialPayload: schema.sharedReportRecipientRevisions.recipientConfidentialPayload,
+    })
     .from(schema.sharedReportRecipientRevisions)
     .where(
       and(

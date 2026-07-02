@@ -643,6 +643,7 @@ export default function SharedReport() {
     : [];
   const partyContext = workspaceQuery.data?.partyContext || null;
   const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
+  const isReviewLocked = Boolean(recipientDraft?.is_review_locked);
   const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
   const latestSentRevision = workspaceQuery.data?.latestSentRevision || null;
   const baselineReviewReportForDownloads =
@@ -2003,6 +2004,18 @@ export default function SharedReport() {
       await evaluateMutation.mutateAsync();
     } catch {
       // evaluateMutation.onError owns the user-facing error toast; keep the click handler settled.
+    }
+  };
+
+  const handleSendLockedReviewedPackage = async () => {
+    if (!isReviewLocked) {
+      toast.error('Cannot send: the response package has not been reviewed yet.');
+      return;
+    }
+    try {
+      await sendBackMutation.mutateAsync();
+    } catch {
+      // sendBackMutation.onError owns the user-facing error toast; keep the click handler settled.
     }
   };
 
@@ -3410,6 +3423,7 @@ export default function SharedReport() {
               finishStage={step3IsEvaluationRunning ? 'evaluating' : 'idle'}
               exceedsAnySizeLimit={false}
               saveDraftPending={saveDraftMutation.isPending}
+              isReviewLocked={isReviewLocked}
               evaluationFailureMessage={
                 isGenerationFailureFallback(updatedRecipientReport)
                   ? 'The AI mediation brief could not be completed. No substantive mediation result was produced. Please retry.'
@@ -3417,6 +3431,8 @@ export default function SharedReport() {
               }
               onBack={() => setStep(2)}
               onRunEvaluation={runEvaluationFromReview}
+              onSendBack={handleSendLockedReviewedPackage}
+              counterpartyName={counterpartyDisplayName || 'counterparty'}
               runActionLabel={getRunOpportunityReviewLabel({
                 stage: MEDIATION_REVIEW_STAGE,
                 isPending: step3IsEvaluationRunning,

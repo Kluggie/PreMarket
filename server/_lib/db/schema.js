@@ -794,6 +794,7 @@ export const sharedReportRecipientRevisions = pgTable(
       .notNull()
       .default(sql`'{}'::jsonb`),
     editorState: jsonb('editor_state').notNull().default(sql`'{}'::jsonb`),
+    isReviewLocked: boolean('is_review_locked').notNull().default(false),
     previousRevisionId: text('previous_revision_id').references(
       () => sharedReportRecipientRevisions.id,
       {

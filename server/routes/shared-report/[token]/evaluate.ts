@@ -67,6 +67,7 @@ import {
   requireRecipientAuthorization,
   resolveSharedReportToken,
   toObject,
+  isRevisionReviewLocked,
 } from '../_shared.js';
 import {
   releaseAiMediationReviewReservation,
@@ -651,6 +652,43 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       docBText: sharedText,
     });
 
+    // If the current draft is already locked from a successful review,
+    // return the cached evaluation without calling the model again.
+    if (isRevisionReviewLocked(currentDraft)) {
+      const [lockedEvaluation] = await resolved.db
+        .select()
+        .from(schema.sharedReportEvaluationRuns)
+        .where(
+          and(
+            eq(schema.sharedReportEvaluationRuns.revisionId, currentDraft.id),
+            eq(schema.sharedReportEvaluationRuns.status, 'success'),
+          ),
+        )
+        .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+        .limit(1);
+
+      if (lockedEvaluation) {
+        const lockedResultJson = toObject(lockedEvaluation.resultJson);
+        ok(res, 200, {
+          ok: true,
+          cached: true,
+          evaluation_id: lockedEvaluation.id,
+          evaluation: {
+            public_report: lockedEvaluation.resultPublicReport || {},
+            evaluation_result: lockedResultJson.evaluation_result || {},
+            status: 'success',
+            runtime_diagnostics: mapRecipientSafeEvaluationDiagnostics({
+              id: lockedEvaluation.id,
+              status: 'success',
+              resultJson: lockedResultJson,
+              resultPublicReport: lockedEvaluation.resultPublicReport || {},
+            }),
+          },
+        });
+        return;
+      }
+    }
+
     const reviewIdempotencyKey = buildSharedReviewIdempotencyKey({
       sharedLinkId: resolved.link.id,
       revisionId: currentDraft.id,
@@ -1149,6 +1187,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         .update(schema.sharedReportRecipientRevisions)
         .set({
           workflowStep: 3,
+          isReviewLocked: true,
           updatedAt: completedAt,
         })
         .where(eq(schema.sharedReportRecipientRevisions.id, currentDraft.id));

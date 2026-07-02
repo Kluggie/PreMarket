@@ -23,6 +23,7 @@ import {
   requireRecipientAuthorization,
   stableJsonEquals,
   toObject,
+  isRevisionReviewLocked,
 } from '../_shared.js';
 
 const SHARED_REPORT_DRAFT_ROUTE = `${SHARED_REPORT_ROUTE}/draft`;
@@ -122,6 +123,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       pickWorkflowStep(body),
       currentDraft ? Number(currentDraft.workflowStep || 0) : 0,
     );
+
+    // Check if the current draft is review locked
+    if (currentDraft && isRevisionReviewLocked(currentDraft)) {
+      throw new ApiError(
+        409,
+        'reviewed_response_locked',
+        'This response package has been reviewed and is now locked. You cannot make further edits. Send it back to continue the negotiation.',
+      );
+    }
+
     const baselineSharedPayload = currentDraft
       ? toObject(currentDraft.sharedPayload)
       : buildDefaultSharedPayload({

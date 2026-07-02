@@ -431,6 +431,10 @@ export async function getCurrentRecipientDraft(db: any, linkId: string) {
   return draft || null;
 }
 
+export function isRevisionReviewLocked(revision: any) {
+  return Boolean(revision?.isReviewLocked);
+}
+
 export function mapDraftView(row: any) {
   if (!row) {
     return null;
@@ -443,6 +447,7 @@ export function mapDraftView(row: any) {
     recipient_confidential_payload: toObject(row.recipientConfidentialPayload),
     workflow_step: Number.isFinite(Number(row.workflowStep)) ? Number(row.workflowStep) : 0,
     editor_state: toObject(row.editorState),
+    is_review_locked: Boolean(row.isReviewLocked),
     previous_revision_id: row.previousRevisionId || null,
     created_at: row.createdAt,
     updated_at: row.updatedAt,

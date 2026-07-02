@@ -8,6 +8,11 @@ import {
   isAllowedNonProductionHost,
 } from './_db-safety.mjs';
 
+// Load env files in order of specificity
+if (process.env.NODE_ENV === 'test') {
+  dotenv.config({ path: '.env.test.local' });
+  dotenv.config({ path: '.env.test' });
+}
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
