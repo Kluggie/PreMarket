@@ -430,6 +430,9 @@ function toFriendlySaveError(error) {
   if (code === 'confidential_edit_not_allowed') {
     return 'You do not have permission to edit Confidential Information.';
   }
+  if (code === 'reviewed_response_locked') {
+    return 'This AI-reviewed response is locked and can no longer be changed.';
+  }
   if (code === 'payload_too_large') return 'Draft is too large to save.';
   return error?.message || 'Unable to save draft.';
 }
@@ -443,11 +446,8 @@ function toFriendlyEvaluateError(error) {
   ) {
     return 'AI mediation took too long to complete. Please retry in a moment.';
   }
-  if (code === 'reevaluation_not_allowed') {
-    return 'This link does not allow additional AI re-reviews. You can still edit and send your response.';
-  }
-  if (code === 'recipient_rereview_limit_reached') {
-    return 'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
+  if (code === 'reviewed_response_locked') {
+    return 'AI mediation has already completed for this response. Send it when you are ready.';
   }
   if (
     code === 'starter_ai_evaluations_monthly_limit_reached' ||
@@ -471,6 +471,12 @@ function toFriendlySendBackError(error, sendTargetNoun = 'the other party') {
   }
   if (code === 'draft_required') {
     return 'Save a draft before sending back.';
+  }
+  if (code === 'ai_review_required_before_send') {
+    return 'Run AI mediation successfully before sending this response.';
+  }
+  if (code === 'reviewed_response_locked') {
+    return error?.message || 'This AI-reviewed response is locked and can no longer be changed.';
   }
   return error?.message || 'Unable to send back updates.';
 }
@@ -977,6 +983,10 @@ export default function SharedReport() {
     ],
   );
   const isSentToCounterparty = Boolean(parentThreadState?.waitingOnCounterparty);
+  const showStep3StatusOnly = isSentToCounterparty || Boolean(parentThreadState?.isClosed);
+  const step3StatusActionText =
+    sharedReportStatusBanner?.text ||
+    (showStep3StatusOnly ? parentPrimaryStatusLabel : '');
 
   useEffect(() => {
     setStep(0);
@@ -3333,7 +3343,19 @@ export default function SharedReport() {
               stepTitle={`Step 3: ${MEDIATION_REVIEW_LABEL}`}
               stepDescription={sendDirectionCopy.step3Description}
               actionSlot={
-                <>
+                showStep3StatusOnly ? (
+                  <>
+                    <Badge
+                      variant="outline"
+                      className={getPrimaryStatusClass(parentPrimaryStatusKey)}
+                    >
+                      {parentPrimaryStatusLabel}
+                    </Badge>
+                    {step3StatusActionText ? (
+                      <span className="text-sm text-slate-600">{step3StatusActionText}</span>
+                    ) : null}
+                  </>
+                ) : (
                   <Button
                     type="button"
                     onClick={sendToCounterparty}
@@ -3341,8 +3363,6 @@ export default function SharedReport() {
                       sendBackMutation.isPending ||
                       saveDraftMutation.isPending ||
                       !canSendBack ||
-                      Boolean(parentThreadState?.isClosed) ||
-                      isSentToCounterparty ||
                       requiresRecipientVerification
                     }
                   >
@@ -3350,20 +3370,11 @@ export default function SharedReport() {
                       ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                       : <Send className="w-4 h-4 mr-2" />}
                     {getSharedReportSendActionLabel(draftDocumentOwner, {
-                      isSent: isSentToCounterparty,
                       isPending: sendBackMutation.isPending,
                       counterpartyName: counterpartyDisplayName,
                     })}
                   </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => { setShowStep3Results(false); setStep(2); }}
-                    disabled={requiresRecipientVerification}
-                  >
-                    Edit again
-                  </Button>
-                </>
+                )
               }
               activeTab={recipientDetailTab}
               onTabChange={setRecipientDetailTab}
@@ -3398,8 +3409,6 @@ export default function SharedReport() {
                 leftBadges: [step3Bundles.confidential.source || 'typed'],
                 rightBadges: [step3Bundles.shared.source || 'typed'],
               }}
-              onBack={() => { setShowStep3Results(false); setStep(2); }}
-              backLabel="Back to Editor"
             />
           ) : (
             <Step3ReviewPackage

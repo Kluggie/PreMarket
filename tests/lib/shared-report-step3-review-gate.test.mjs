@@ -141,7 +141,7 @@ test('recipient Step 3 review package has Run AI Mediation action', async () => 
   );
 });
 
-test('recipient Run AI Mediation warns about owner credits and surfaces the per-round cap copy', async () => {
+test('recipient Run AI Mediation warns about owner credits and reflects one-review lock behavior', async () => {
   const source = await readFile(SHARED_REPORT_PATH, 'utf8');
   const routeSource = await readFile(SHARED_REPORT_EVALUATE_ROUTE_PATH, 'utf8');
 
@@ -150,25 +150,37 @@ test('recipient Run AI Mediation warns about owner credits and surfaces the per-
     'Recipient-triggered mediation must warn that owner credits will be used',
   );
   assert.ok(
-    source.includes('recipient_rereview_limit_reached'),
-    'SharedReport must map the per-round recipient re-review cap code',
+    source.includes('reviewed_response_locked'),
+    'SharedReport must map the reviewed response lock code',
   );
   assert.ok(
-    source.includes(
-      'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
-    ),
-    'SharedReport must surface the per-round recipient re-review cap copy',
+    source.includes('This AI-reviewed response is locked and can no longer be changed.'),
+    'SharedReport must surface the locked response copy for save/send attempts after review',
   );
   assert.ok(
-    source.includes('This link does not allow additional AI re-reviews. You can still edit and send your response.'),
-    'SharedReport must use additional re-review copy instead of blocking AI mediation generally',
+    source.includes('Run AI mediation successfully before sending this response.'),
+    'SharedReport must require a successful AI review before send-back',
+  );
+  assert.ok(
+    !source.includes('recipient_rereview_limit_reached'),
+    'SharedReport must not carry stale re-review limit messaging',
+  );
+  assert.ok(
+    !source.includes('This link does not allow additional AI re-reviews. You can still edit and send your response.'),
+    'SharedReport must not carry stale re-review entitlement copy',
   );
   assert.ok(
     !source.includes('This link does not allow AI mediation.'),
     'SharedReport must not show the generic AI mediation disabled copy',
   );
-  assert.ok(routeSource.includes('Cache hit = exact same inputs already have a saved successful AI result'));
-  assert.ok(routeSource.includes('Cache miss = inputs changed or no saved result exists'));
+  assert.ok(
+    routeSource.includes('getLatestRecipientSubstantiveEvaluationRunForRevision'),
+    'Evaluate route must resolve substantive successful reviews for the active revision',
+  );
+  assert.ok(
+    routeSource.includes('respondWithCachedEvaluation(res, lockedEvaluation, { reviewLocked: true });'),
+    'Evaluate route must return the cached successful evaluation instead of re-running the model after lock',
+  );
 });
 
 test('recipient Run AI Mediation client calls shared-report evaluate with POST', async () => {
@@ -414,13 +426,42 @@ test('navigating forward from Step 2 to Step 3 resets showStep3Results to false'
   );
 });
 
-test('"Edit again" from results resets showStep3Results and goes back to Step 2', async () => {
+test('successful Step 3 results remove edit and back-to-editor navigation', async () => {
   const source = await readFile(SHARED_REPORT_PATH, 'utf8');
 
-  // The Edit again button must both reset showStep3Results and go to step 2.
   assert.ok(
-    source.includes('setShowStep3Results(false); setStep(2)'),
-    'Edit again must reset showStep3Results and navigate to Step 2',
+    !source.includes('Edit again'),
+    'Successful mediation results must not expose an Edit again action',
+  );
+  assert.ok(
+    !source.includes('backLabel="Back to Editor"'),
+    'Successful mediation results must not expose a Back to Editor action',
+  );
+});
+
+test('successful Step 3 results show send-only actions before send and status-only after send', async () => {
+  const source = await readFile(SHARED_REPORT_PATH, 'utf8');
+  const step3Section = source.indexOf('showStep3Results ? (');
+  assert.ok(step3Section >= 0, 'Expected Step 3 results branch');
+
+  const step3Block = source.slice(step3Section, step3Section + 3200);
+  assert.ok(
+    step3Block.includes('showStep3StatusOnly'),
+    'Results actions must branch between send-only and status-only states',
+  );
+  assert.ok(
+    source.includes('const step3StatusActionText =') &&
+      source.includes('sharedReportStatusBanner?.text') &&
+      step3Block.includes('step3StatusActionText'),
+    'Sent results must surface waiting/sent status copy instead of a send button',
+  );
+  assert.ok(
+    step3Block.includes('getSharedReportSendActionLabel(draftDocumentOwner, {'),
+    'Pre-send results must keep the single Send action',
+  );
+  assert.ok(
+    !step3Block.includes('isSent: isSentToCounterparty'),
+    'The send CTA must not remain visible as a disabled sent-state button after sending',
   );
 });
 

@@ -13,6 +13,9 @@ export const DRAFT_STATUS = 'draft';
 export const SENT_STATUS = 'sent';
 export const SUPERSEDED_STATUS = 'superseded';
 export const MAX_PAYLOAD_BYTES = 200 * 1024;
+export const REVIEWED_RESPONSE_LOCKED_CODE = 'reviewed_response_locked';
+export const REVIEWED_RESPONSE_LOCKED_MESSAGE =
+  'This AI-reviewed response is locked and can no longer be changed.';
 const VERIFY_RATE_LIMIT_ENTITY_TYPE = 'shared_report_verify_rate_limit';
 
 export function asText(value: unknown) {
@@ -236,9 +239,23 @@ export async function resolveSharedReportToken(params: ResolveParams) {
   };
 }
 
-export function buildShareView(link: any) {
+export function buildShareView(
+  link: any,
+  overrides: {
+    permissions?: Record<string, unknown>;
+    reviewState?: Record<string, unknown>;
+  } = {},
+) {
   const invitedEmail = normalizeEmail(link.recipientEmail) || null;
   const authorizedEmail = normalizeEmail(link.authorizedEmail) || null;
+  const resolvedPermissions = {
+    can_view: Boolean(link.canView),
+    can_edit_shared: Boolean(link.canEdit),
+    can_edit_confidential: Boolean(link.canEditConfidential),
+    can_reevaluate: Boolean(link.canReevaluate),
+    can_send_back: Boolean(link.canSendBack),
+    ...(overrides.permissions || {}),
+  };
   return {
     id: link.id,
     status: asText(link.status) || 'active',
@@ -250,13 +267,11 @@ export function buildShareView(link: any) {
       authorized_email: authorizedEmail,
       authorized_at: link.authorizedAt || null,
     },
-    permissions: {
-      can_view: Boolean(link.canView),
-      can_edit_shared: Boolean(link.canEdit),
-      can_edit_confidential: Boolean(link.canEditConfidential),
-      can_reevaluate: Boolean(link.canReevaluate),
-      can_send_back: Boolean(link.canSendBack),
-    },
+    permissions: resolvedPermissions,
+    review_state:
+      overrides.reviewState && typeof overrides.reviewState === 'object' && !Array.isArray(overrides.reviewState)
+        ? overrides.reviewState
+        : undefined,
   };
 }
 
@@ -499,6 +514,82 @@ export async function getLatestRecipientEvaluationRun(db: any, linkId: string) {
   return run || null;
 }
 
+export function isGenerationFailureFallbackReport(report: unknown) {
+  const normalizedReport = toObject(report);
+  return (
+    asText(normalizedReport.generation_status).toLowerCase() === 'failed' &&
+    normalizedReport.retry_recommended !== false
+  );
+}
+
+export function isSubstantiveRecipientEvaluationReport(report: unknown) {
+  const normalizedReport = toObject(report);
+  return (
+    Object.keys(normalizedReport).length > 0 &&
+    !isGenerationFailureFallbackReport(normalizedReport)
+  );
+}
+
+export function isSuccessfulSubstantiveEvaluationRun(
+  row: any,
+  {
+    linkId = '',
+    revisionId = '',
+  }: {
+    linkId?: string;
+    revisionId?: string;
+  } = {},
+) {
+  if (!row) {
+    return false;
+  }
+  if (asText(row.status).toLowerCase() !== 'success') {
+    return false;
+  }
+  if (linkId && asText(row.sharedLinkId) !== asText(linkId)) {
+    return false;
+  }
+  if (revisionId && asText(row.revisionId) !== asText(revisionId)) {
+    return false;
+  }
+  return isSubstantiveRecipientEvaluationReport(row.resultPublicReport);
+}
+
+export async function getLatestRecipientSubstantiveEvaluationRunForRevision(
+  db: any,
+  linkId: string,
+  revisionId: string,
+) {
+  if (!asText(linkId) || !asText(revisionId)) {
+    return null;
+  }
+  const rows = await db
+    .select()
+    .from(schema.sharedReportEvaluationRuns)
+    .where(
+      and(
+        eq(schema.sharedReportEvaluationRuns.sharedLinkId, linkId),
+        eq(schema.sharedReportEvaluationRuns.revisionId, revisionId),
+        eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+        eq(schema.sharedReportEvaluationRuns.status, 'success'),
+      ),
+    )
+    .orderBy(
+      desc(schema.sharedReportEvaluationRuns.updatedAt),
+      desc(schema.sharedReportEvaluationRuns.createdAt),
+    )
+    .limit(20);
+
+  return (
+    rows.find((row) =>
+      isSuccessfulSubstantiveEvaluationRun(row, {
+        linkId,
+        revisionId,
+      }),
+    ) || null
+  );
+}
+
 export async function getLatestRecipientSentRevision(db: any, linkId: string) {
   const [row] = await db
     .select()
@@ -577,6 +668,13 @@ export function mapEvaluationRunView(row: any) {
     updated_at: row.updatedAt,
     runtime_diagnostics: mapRecipientSafeEvaluationDiagnostics(row),
   };
+}
+
+export function buildReviewedResponseLockedError(
+  message = REVIEWED_RESPONSE_LOCKED_MESSAGE,
+  details: Record<string, unknown> = {},
+) {
+  return new ApiError(409, REVIEWED_RESPONSE_LOCKED_CODE, message, details);
 }
 
 export function assertJsonObjectField(value: unknown, fieldName: string) {

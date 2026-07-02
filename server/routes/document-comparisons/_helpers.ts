@@ -3759,6 +3759,11 @@ function buildV2RecipientProjection(params: {
   const sourceNarrativeRemainsValid =
     !sourceReport.narrative || narrativeValidation.valid;
 
+  const generationFailed = scrubString(sourceReport.generation_status, markers, '') === 'failed';
+  const retryRecommended = generationFailed
+    ? sourceReport.retry_recommended !== false
+    : false;
+
   const safeReport = {
     report_format: 'v2' as const,
     analysis_stage: MEDIATION_REVIEW_STAGE,
@@ -3926,6 +3931,11 @@ export function buildRecipientSafeEvaluationProjection(params: {
     });
   }
 
+  const generationFailed = scrubString(sourceReport.generation_status, markers, '') === 'failed';
+  const retryRecommended = generationFailed
+    ? sourceReport.retry_recommended !== false
+    : false;
+
   const safeReport = {
     template_id: scrubString(sourceReport.template_id, markers, 'document_comparison_template'),
     template_name: scrubString(
@@ -4013,17 +4023,31 @@ export function buildRecipientSafeEvaluationProjection(params: {
     sections: sanitizeLegacySections(sourceReport.sections, markers),
     provider: scrubString(sourceReport.provider || evaluation.provider, markers, 'projection'),
     model: scrubString(sourceReport.model || evaluation.model, markers, 'recipient-safe'),
+    ...(generationFailed
+      ? {
+          generation_status: 'failed',
+          retry_recommended: retryRecommended,
+        }
+      : {}),
   } as Record<string, any>;
 
   const projectedReport = redactConfidentialStrings(safeReport, markers);
   const projectionHasLeak = hasLeakAfterProjection(projectedReport, markers);
-  const fallbackReport = buildFallbackRecipientReport({
-    title: scrubString(params?.title, markers, 'Document Comparison'),
-    generatedAt,
-    score,
-    confidence: confidence / 100,
-    recommendation,
-  });
+  const fallbackReport = {
+    ...buildFallbackRecipientReport({
+      title: scrubString(params?.title, markers, 'Document Comparison'),
+      generatedAt,
+      score,
+      confidence: confidence / 100,
+      recommendation,
+    }),
+    ...(generationFailed
+      ? {
+          generation_status: 'failed',
+          retry_recommended: retryRecommended,
+        }
+      : {}),
+  };
   const finalReport = projectionHasLeak ? fallbackReport : projectedReport;
   const summary =
     scrubString(

@@ -9,7 +9,7 @@ import sharedReportRecipientDraftHandler from '../../server/routes/shared-report
 import sharedReportRecipientEvaluateHandler from '../../server/routes/shared-report/[token]/evaluate.ts';
 import sharedReportRecipientSendBackHandler from '../../server/routes/shared-report/[token]/send-back.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
-import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
+import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 
 ensureTestEnv();
@@ -115,6 +115,66 @@ async function getSharedLinkRowByToken(token) {
   return rows.rows[0] || null;
 }
 
+function buildMockSharedMediationEvaluation({
+  fitLevel,
+  confidence01,
+  score,
+  primaryInsight,
+  why,
+  missing,
+  movementDirection,
+  bilateralRoundNumber,
+  priorBilateralRoundNumber = null,
+  deltaSummary = '',
+  resolvedSinceLastRound = [],
+  remainingDeltas = missing,
+}) {
+  const recommendation =
+    fitLevel === 'high' ? 'High' : fitLevel === 'medium' ? 'Medium' : 'Low';
+
+  return {
+    recommendation,
+    score,
+    confidence: Math.round(confidence01 * 100),
+    summary: primaryInsight,
+    evaluation_provider: 'test',
+    report: {
+      report_format: 'v2',
+      analysis_stage: 'mediation_review',
+      recommendation,
+      fit_level: fitLevel,
+      confidence_0_1: confidence01,
+      why,
+      missing,
+      redactions: [],
+      movement_direction: movementDirection,
+      bilateral_round_number: bilateralRoundNumber,
+      ...(priorBilateralRoundNumber
+        ? { prior_bilateral_round_number: priorBilateralRoundNumber }
+        : {}),
+      ...(deltaSummary ? { delta_summary: deltaSummary } : {}),
+      ...(resolvedSinceLastRound.length
+        ? { resolved_since_last_round: resolvedSinceLastRound }
+        : {}),
+      ...(remainingDeltas.length ? { remaining_deltas: remainingDeltas } : {}),
+      report_title: 'AI Mediation Review',
+      primary_insight: primaryInsight,
+      narrative: {
+        sections: [
+          {
+            heading: 'Summary',
+            body: primaryInsight,
+          },
+          {
+            heading: 'Open Questions',
+            body: missing.join(' '),
+          },
+        ],
+      },
+    },
+  };
+}
+
 if (!hasDatabaseUrl()) {
   test('Phase 1.5 Integration: demand-forecasting multi-round scenario (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
@@ -165,33 +225,24 @@ if (!hasDatabaseUrl()) {
     const previousEvalOverride = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
     globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async (input) => {
       capturedV2Calls.push(input);
-      return {
-        report: {
-          recommendation: 'review',
-          executive_summary: 'Mediation Summary: The recipient has confirmed interest and raised specific implementation and cost concerns. With clarifications on data governance and cost alignment, this progresses toward executable agreement.',
-          sections: [
-            {
-              heading: 'Where the Parties Align',
-              bullets: ['Both sides support phased rollout, accept annual renewal terms, and recognize the need for infrastructure clarity.'],
-            },
-            {
-              heading: 'Where the Deal Is Stuck',
-              bullets: ['Recipient cost expectations ($7k/month) are below proposal ($8k/month). Infrastructure cost split and post-contract data ownership remain unspecified. Liability caps need explicit definition.'],
-            },
-            {
-              heading: 'Suggested Bridge',
-              bullets: ['Offer cost flexibility in months 1-2 (pilot phase) with standard rate starting month 3. Define infrastructure shared responsibility model. Commit to specific liability caps tied to annual fee.'],
-            },
-            {
-              heading: 'Next Step',
-              bullets: ['Confirm data retention policy and propose tiered infrastructure cost model to close the budget gap.'],
-            },
-          ],
-        },
-        evaluation_provider: 'test',
-        similarity_score: 70,
-        confidence_score: 0.62,
-      };
+      return buildMockSharedMediationEvaluation({
+        fitLevel: 'medium',
+        confidence01: 0.62,
+        score: 70,
+        primaryInsight:
+          'The recipient has confirmed interest and raised specific implementation and cost concerns. With clarifications on data governance and cost alignment, this progresses toward executable agreement.',
+        why: [
+          'Both sides support phased rollout and accept the annual renewal structure.',
+          'The recipient remains interested if cost, data governance, and liability details are clarified.',
+        ],
+        missing: [
+          'Define the infrastructure cost split and responsibility model.',
+          'Confirm post-contract data ownership and retention terms.',
+          'Specify liability caps before final commitment.',
+        ],
+        movementDirection: 'stalled',
+        bilateralRoundNumber: 1,
+      });
     };
 
     try {
@@ -226,12 +277,36 @@ if (!hasDatabaseUrl()) {
     const round1Body = round1EvalRes.jsonBody();
     assert.equal(round1Body.ok, true);
     assert.equal(Boolean(round1Body.evaluation_id), true);
+    const round1EvaluationResult = round1Body.evaluation?.evaluation_result || {};
     const round1Report = round1Body.evaluation?.public_report || {};
 
     // Phase 1.5 Verification - Round 1
-    assert.equal(round1Report.recommendation, 'review', 'Phase 1.5: Round 1 recommendation should be review');
-    assert.equal(round1Report.similarity_score, 70, 'Phase 1.5: Round 1 similarity should be 70');
-    assert.equal(String(round1Report.executive_summary || '').toLowerCase().includes('interested'), true, 'Phase 1.5: Round 1 should summarize interest');
+    assert.equal(
+      round1EvaluationResult.score,
+      70,
+      'Phase 1.5: Round 1 evaluation result score should be 70',
+    );
+    assert.equal(
+      round1Report.recommendation,
+      'Medium',
+      'Phase 1.5: Round 1 recommendation should map to the current Medium fit contract',
+    );
+    assert.equal(
+      round1Report.fit_level,
+      'medium',
+      'Phase 1.5: Round 1 fit level should stay in a review/medium state',
+    );
+    assert.equal(
+      String([
+        round1Report.primary_insight || '',
+        ...(Array.isArray(round1Report.why) ? round1Report.why : []),
+        ...((round1Report.narrative?.sections || []).map((section) => section.body) || []),
+      ].join(' '))
+        .toLowerCase()
+        .includes('interested'),
+      true,
+      'Phase 1.5: Round 1 should summarize interest',
+    );
     assert.equal(
       String(round1Report.movement_direction || '').toLowerCase(),
       'stalled',
@@ -248,8 +323,11 @@ if (!hasDatabaseUrl()) {
       'Phase 1.5: Recipient confidential budget constraints must not leak',
     );
     assert.equal(
-      String(round1Report.why || []).some((entry) => /phased rollout/i.test(entry)) ||
-        String(round1Report.narrative?.sections?.map((s) => s.body).join('') || '').includes('phased rollout'),
+      (Array.isArray(round1Report.why) &&
+        round1Report.why.some((entry) => /phased rollout/i.test(String(entry)))) ||
+        String(round1Report.narrative?.sections?.map((s) => s.body).join('') || '').includes(
+          'phased rollout',
+        ),
       true,
       'Phase 1.5: Initial review should identify alignment on phased rollout',
     );
@@ -303,42 +381,44 @@ if (!hasDatabaseUrl()) {
         `,
       },
       workflow_step: 2,
-    }, recipientCookie);
+    }, ownerCookie);
     assert.equal(round2SaveRes.statusCode, 200);
 
     // Update mock for Round 2 evaluation (later-round delta analysis)
     globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async (input) => {
       capturedV2Calls.push(input);
-      return {
-        report: {
-          recommendation: 'proceed',
-          executive_summary: 'Mediation Summary: Proposer has closed material gaps on cost, data governance, and liability. Both parties have narrowed the deal into near-final terms. Remaining items are administrative approval and signature logistics.',
-          sections: [
-            {
-              heading: 'Where the Parties Align',
-              bullets: ['Pilot pricing ($6k/month), phased timeline (6-month pilot then 12+ months), shared infrastructure model, full data ownership reversion, and 2x liability caps are all confirmed.'],
-            },
-            {
-              heading: 'Where the Deal Is Stuck',
-              bullets: ['Only administrative final-stage items remain: internal approval routing, signature authority confirmation, and legal review completion.'],
-            },
-            {
-              heading: 'Suggested Bridge',
-              bullets: ['Schedule executive sign-off calls to confirm internal approvals on both sides. Finalize signature-page terms once approval gates are cleared.'],
-            },
-            {
-              heading: 'Next Step',
-              bullets: ['Confirm final approval authority and execute agreement.'],
-            },
-          ],
-        },
-        evaluation_provider: 'test',
-        similarity_score: 78,
-        confidence_score: 0.78,
-      };
+      return buildMockSharedMediationEvaluation({
+        fitLevel: 'high',
+        confidence01: 0.78,
+        score: 78,
+        primaryInsight:
+          'Proposer has closed material gaps on cost, data governance, and liability. Both parties have narrowed the deal into near-final terms. Remaining items are administrative approval and signature logistics.',
+        why: [
+          'Pilot pricing, phased rollout, infrastructure allocation, data ownership, and liability caps are now aligned.',
+          'The commercial blockers from the prior bilateral round appear resolved.',
+        ],
+        missing: [
+          'Confirm internal approval routing on both sides.',
+          'Finalize signature authority confirmation and legal review completion.',
+        ],
+        movementDirection: 'converging',
+        bilateralRoundNumber: 2,
+        priorBilateralRoundNumber: 1,
+        deltaSummary:
+          'Compared with the prior bilateral round, cost, infrastructure, data ownership, and liability blockers are resolved; only final approvals remain.',
+        resolvedSinceLastRound: [
+          'Pilot pricing aligned.',
+          'Infrastructure cost split defined.',
+          'Data ownership and liability cap terms confirmed.',
+        ],
+        remainingDeltas: [
+          'Confirm internal approval routing on both sides.',
+          'Finalize signature authority confirmation and legal review completion.',
+        ],
+      });
     };
 
-    const round2EvalRes = await evaluateRecipientDraft(round2Token, {}, recipientCookie);
+    const round2EvalRes = await evaluateRecipientDraft(round2Token, {}, ownerCookie);
     assert.equal(round2EvalRes.statusCode, 200);
     const round2Body = round2EvalRes.jsonBody();
     assert.equal(round2Body.ok, true);
@@ -441,7 +521,7 @@ if (!hasDatabaseUrl()) {
       'Phase 1.5: Round 1 confidence should not collapse due to regression',
     );
     assert.equal(
-      String(round1Report.why || []).length > 0,
+      Array.isArray(round1Report.why) && round1Report.why.length > 0,
       true,
       'Phase 1.5: Round 1 should have substantive why content',
     );
@@ -454,10 +534,15 @@ if (!hasDatabaseUrl()) {
     );
 
     // ─── Workspace verification ────────────────────────────────────────────
-    const workspaceRes = await getRecipientWorkspace(round2Token, recipientCookie);
+    const workspaceRes = await getRecipientWorkspace(round2Token, ownerCookie);
     assert.equal(workspaceRes.statusCode, 200);
     const workspace = workspaceRes.jsonBody();
-    assert.equal(workspace.latestEvaluation?.result_json?.bilateral_round_number || 0, 2);
+    assert.equal(
+      workspace.latestEvaluation?.result_json?.input_trace?.bilateral_round_number ||
+        workspace.latestEvaluation?.result_json?.bilateral_round_number ||
+        0,
+      2,
+    );
     assert.equal(
       workspace.latestReport?.movement_direction || '',
       'converging',
@@ -474,9 +559,9 @@ if (!hasDatabaseUrl()) {
     console.log(`   ✓ Initial review quality not regressed (Round 1 confidence: ${round1Report.confidence_0_1})`);
     } finally {
       if (previousEvalOverride === undefined) {
-        delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
       } else {
-        globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = previousEvalOverride;
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvalOverride;
       }
       if (previousMediationProvider === undefined) {
         delete process.env.MEDIATION_AI_PROVIDER;

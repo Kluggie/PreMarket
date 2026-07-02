@@ -23,6 +23,7 @@ import {
   buildShareView,
   getCurrentRecipientDraft,
   getLatestRecipientEvaluationRun,
+  getLatestRecipientSubstantiveEvaluationRunForRevision,
   getLatestRecipientSentRevision,
   getToken,
   logTokenEvent,
@@ -298,6 +299,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       link: resolved.link,
     });
     const activeRoundNumber = currentLinkRound + 1;
+    const activeRevisionForLock = currentDraft || latestSentRevision || null;
+    const lockedEvaluation = activeRevisionForLock
+      ? await getLatestRecipientSubstantiveEvaluationRunForRevision(
+          resolved.db,
+          resolved.link.id,
+          activeRevisionForLock.id,
+        )
+      : null;
+    const activePackageLocked = Boolean(lockedEvaluation);
+    const isSentPackage = Boolean(!currentDraft && latestSentRevision);
 
     if (process.env.NODE_ENV !== 'production') {
       console.info(
@@ -362,7 +373,27 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           outcome: parentOutcome,
         })
       : null;
-    const shareView: any = buildShareView(resolved.link);
+    const shareView: any = buildShareView(resolved.link, {
+      permissions: {
+        can_edit_shared: Boolean(resolved.link.canEdit) && !activePackageLocked && !isSentPackage,
+        can_edit_confidential:
+          Boolean(resolved.link.canEditConfidential) && !activePackageLocked && !isSentPackage,
+        can_reevaluate: Boolean(resolved.link.canReevaluate) && !activePackageLocked && !isSentPackage,
+        can_send_back: Boolean(resolved.link.canSendBack) && !isSentPackage,
+      },
+      reviewState: {
+        active_revision_id: activeRevisionForLock?.id || null,
+        locked_revision_id: lockedEvaluation?.revisionId || null,
+        locked_evaluation_id: lockedEvaluation?.id || null,
+        is_locked: activePackageLocked,
+        is_sent: isSentPackage,
+        lock_reason: isSentPackage
+          ? 'sent_after_successful_review'
+          : activePackageLocked
+            ? 'successful_ai_review'
+            : null,
+      },
+    });
     const isAuthenticated = Boolean(currentUser);
     const canViewAuthorizationDetails = Boolean(isAuthenticated && recipientAuthorization.aliasVerifiedMatch);
 

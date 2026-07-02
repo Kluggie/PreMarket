@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { schema } from '../../../_lib/db/client.js';
@@ -52,12 +52,14 @@ import {
 import {
   DRAFT_STATUS,
   RECIPIENT_ROLE,
-  SENT_STATUS,
   SHARED_REPORT_ROUTE,
   assertPayloadSize,
+  buildReviewedResponseLockedError,
   buildDefaultConfidentialPayload,
   buildDefaultSharedPayload,
   getCurrentRecipientDraft,
+  getLatestRecipientSentRevision,
+  getLatestRecipientSubstantiveEvaluationRunForRevision,
   getPayloadText,
   getToken,
   logTokenEvent,
@@ -75,10 +77,6 @@ import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewSta
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
-const ADDITIONAL_REREVIEW_NOT_ALLOWED_MESSAGE =
-  'This link does not allow additional AI re-reviews. You can still edit and send your response.';
-const RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE =
-  'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.';
 
 function logEvaluationRuntime(
   context: any,
@@ -404,6 +402,27 @@ function toApiError(error: any) {
   return new ApiError(safeStatus, code, message);
 }
 
+function respondWithCachedEvaluation(res: any, run: any, { reviewLocked = false } = {}) {
+  const resultJson = toObject(run?.resultJson);
+  ok(res, 200, {
+    ok: true,
+    cached: true,
+    review_locked: reviewLocked,
+    evaluation_id: run?.id || null,
+    evaluation: {
+      public_report: run?.resultPublicReport || {},
+      evaluation_result: resultJson.evaluation_result || {},
+      status: 'success',
+      runtime_diagnostics: mapRecipientSafeEvaluationDiagnostics({
+        id: run?.id,
+        status: 'success',
+        resultJson,
+        resultPublicReport: run?.resultPublicReport || {},
+      }),
+    },
+  });
+}
+
 export default async function handler(req: any, res: any, tokenParam?: string) {
   const routeStartedAt = Date.now();
   await withApiRoute(req, res, SHARED_REPORT_EVALUATE_ROUTE, async (context) => {
@@ -436,7 +455,30 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const defaultConfidentialPayload = buildDefaultConfidentialPayload();
 
     let currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
+    const latestSentRevision = currentDraft
+      ? null
+      : await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
     const now = new Date();
+
+    if (!currentDraft && latestSentRevision) {
+      const sentRevisionEvaluation = await getLatestRecipientSubstantiveEvaluationRunForRevision(
+        resolved.db,
+        resolved.link.id,
+        latestSentRevision.id,
+      );
+      if (sentRevisionEvaluation) {
+        respondWithCachedEvaluation(res, sentRevisionEvaluation, { reviewLocked: true });
+        return;
+      }
+      throw buildReviewedResponseLockedError(
+        'This reviewed response has already been sent and this shared link is now read-only.',
+        {
+          revision_id: latestSentRevision.id,
+          shared_link_id: resolved.link.id,
+          status: latestSentRevision.status || null,
+        },
+      );
+    }
 
     if (!currentDraft) {
       const [created] = await resolved.db
@@ -462,6 +504,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     if (!currentDraft) {
       throw new ApiError(500, 'draft_resolution_failed', 'Unable to resolve recipient draft for evaluation');
+    }
+
+    const lockedEvaluation = await getLatestRecipientSubstantiveEvaluationRunForRevision(
+      resolved.db,
+      resolved.link.id,
+      currentDraft.id,
+    );
+    if (lockedEvaluation) {
+      respondWithCachedEvaluation(res, lockedEvaluation, { reviewLocked: true });
+      return;
     }
 
     const sharedPayload = toObject(currentDraft.sharedPayload);
@@ -655,42 +707,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       confidentialText: confidentialBundle,
     });
 
-    // Cache hit = exact same inputs already have a saved successful AI result,
-    // so there is no model call and no owner review-credit usage.
-    const [duplicateRun] = await resolved.db
-      .select()
-      .from(schema.sharedReportEvaluationRuns)
-      .where(
-        and(
-          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
-          eq(schema.sharedReportEvaluationRuns.status, 'success'),
-          sql`${schema.sharedReportEvaluationRuns.resultJson}->>'review_idempotency_key' = ${reviewIdempotencyKey}`,
-        ),
-      )
-      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
-      .limit(1);
-
-    if (duplicateRun) {
-      const duplicateResultJson = toObject(duplicateRun.resultJson);
-      ok(res, 200, {
-        ok: true,
-        cached: true,
-        evaluation_id: duplicateRun.id,
-        evaluation: {
-          public_report: duplicateRun.resultPublicReport || {},
-          evaluation_result: duplicateResultJson.evaluation_result || {},
-          status: 'success',
-          runtime_diagnostics: mapRecipientSafeEvaluationDiagnostics({
-            id: duplicateRun.id,
-            status: 'success',
-            resultJson: duplicateResultJson,
-            resultPublicReport: duplicateRun.resultPublicReport || {},
-          }),
-        },
-      });
-      return;
-    }
-
     // Identical cache miss already started: keep the existing in-flight contract.
     const [pendingDuplicateRun] = await resolved.db
       .select({
@@ -716,73 +732,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         {
           evaluation_id: pendingDuplicateRun.id,
           revision_id: pendingDuplicateRun.revisionId,
-        },
-      );
-    }
-
-    // Cache miss = inputs changed or no saved result exists. Before any model
-    // call or owner review-credit reservation, enforce the per-round policy:
-    // 1) first recipient review is allowed by default, and
-    // 2) only one additional non-cached re-review is allowed when enabled.
-    const [roundReviewCountRow] = await resolved.db
-      .select({
-        runCount: sql<number>`count(*)::int`,
-      })
-      .from(schema.sharedReportEvaluationRuns)
-      .where(
-        and(
-          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
-          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
-          inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
-          sql`${schema.sharedReportEvaluationRuns.resultJson}->'input_trace'->>'exchange_round' = ${String(outgoingRoundNumber)}`,
-        ),
-      );
-
-    const existingRoundRunCount = Number(roundReviewCountRow?.runCount || 0) || 0;
-
-    const [latestRoundReviewRun] = await resolved.db
-      .select({
-        id: schema.sharedReportEvaluationRuns.id,
-        revisionId: schema.sharedReportEvaluationRuns.revisionId,
-        status: schema.sharedReportEvaluationRuns.status,
-      })
-      .from(schema.sharedReportEvaluationRuns)
-      .where(
-        and(
-          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
-          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
-          inArray(schema.sharedReportEvaluationRuns.status, ['pending', 'success']),
-          sql`${schema.sharedReportEvaluationRuns.resultJson}->'input_trace'->>'exchange_round' = ${String(outgoingRoundNumber)}`,
-        ),
-      )
-      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
-      .limit(1);
-
-    if (existingRoundRunCount > 0 && !resolved.link.canReevaluate) {
-      throw new ApiError(
-        403,
-        'reevaluation_not_allowed',
-        ADDITIONAL_REREVIEW_NOT_ALLOWED_MESSAGE,
-        {
-          evaluation_id: latestRoundReviewRun?.id || null,
-          revision_id: latestRoundReviewRun?.revisionId || null,
-          exchange_round: outgoingRoundNumber,
-          status: latestRoundReviewRun?.status || null,
-        },
-      );
-    }
-
-    const additionalRoundReviewsUsed = Math.max(0, existingRoundRunCount - 1);
-    if (additionalRoundReviewsUsed >= 1) {
-      throw new ApiError(
-        409,
-        'recipient_rereview_limit_reached',
-        RECIPIENT_REREVIEW_LIMIT_REACHED_MESSAGE,
-        {
-          evaluation_id: latestRoundReviewRun?.id || null,
-          revision_id: latestRoundReviewRun?.revisionId || null,
-          exchange_round: outgoingRoundNumber,
-          status: latestRoundReviewRun?.status || null,
         },
       );
     }

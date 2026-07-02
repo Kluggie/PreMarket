@@ -35,7 +35,10 @@ import {
   SHARED_REPORT_ROUTE,
   SUPERSEDED_STATUS,
   asText,
+  buildReviewedResponseLockedError,
   getCurrentRecipientDraft,
+  getLatestRecipientSentRevision,
+  getLatestRecipientSubstantiveEvaluationRunForRevision,
   getPayloadText,
   getToken,
   logTokenEvent,
@@ -302,7 +305,35 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
     if (!currentDraft) {
+      const latestSentRevision = await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
+      if (latestSentRevision) {
+        throw buildReviewedResponseLockedError(
+          'This reviewed response has already been sent and this shared link is now read-only.',
+          {
+            revision_id: latestSentRevision.id,
+            shared_link_id: resolved.link.id,
+            status: latestSentRevision.status || SENT_STATUS,
+          },
+        );
+      }
       throw new ApiError(400, 'draft_required', 'Save a recipient draft before sending back');
+    }
+
+    const latestEvaluation = await getLatestRecipientSubstantiveEvaluationRunForRevision(
+      resolved.db,
+      resolved.link.id,
+      currentDraft.id,
+    );
+    if (!latestEvaluation) {
+      throw new ApiError(
+        409,
+        'ai_review_required_before_send',
+        'Run AI mediation successfully before sending this response.',
+        {
+          revision_id: currentDraft.id,
+          shared_link_id: resolved.link.id,
+        },
+      );
     }
 
     const now = new Date();
@@ -349,22 +380,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       })
       .where(eq(schema.sharedReportRecipientRevisions.id, currentDraft.id))
       .returning();
-
-    // ── 2. Capture latest evaluation for this revision ─────────────────────
-
-    const [latestEvaluation] = await resolved.db
-      .select()
-      .from(schema.sharedReportEvaluationRuns)
-      .where(
-        and(
-          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
-          eq(schema.sharedReportEvaluationRuns.revisionId, currentDraft.id),
-          eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
-          eq(schema.sharedReportEvaluationRuns.status, 'success'),
-        ),
-      )
-      .orderBy(desc(schema.sharedReportEvaluationRuns.updatedAt))
-      .limit(1);
 
     const publicReport = toObject(latestEvaluation?.resultPublicReport);
     const evaluationResult = toObject((latestEvaluation?.resultJson as any)?.evaluation_result);
@@ -560,7 +575,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         canView: true,
         canEdit: true,
         canEditConfidential: true,
-        canReevaluate: true,
+        canReevaluate: false,
         canSendBack: true,
         maxUses: 0,
         uses: 0,

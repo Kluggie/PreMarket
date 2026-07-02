@@ -157,6 +157,40 @@ async function evaluateRecipientDraft(token, body = {}, cookie = null, queryOver
   return res;
 }
 
+async function evaluateRecipientDraftWithMockedSuccess(
+  token,
+  cookie,
+  {
+    recommendation = 'review',
+    executiveSummary = 'Recipient-safe mediation review is ready.',
+    similarityScore = 72,
+    confidenceScore = undefined,
+    sections = [{ heading: 'Summary', bullets: ['Recipient-safe mediation review is ready.'] }],
+  } = {},
+) {
+  const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+  globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+    report: {
+      recommendation,
+      executive_summary: executiveSummary,
+      sections,
+    },
+    evaluation_provider: 'test',
+    similarity_score: similarityScore,
+    ...(confidenceScore === undefined ? {} : { confidence_score: confidenceScore }),
+  });
+
+  try {
+    return await evaluateRecipientDraft(token, {}, cookie);
+  } finally {
+    if (previousEvaluator === undefined) {
+      delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    } else {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+    }
+  }
+}
+
 function mockVertexV2Call(mockFn) {
   const previous = globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
   globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = mockFn;
@@ -939,7 +973,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('Prompt2 evaluate requires auth and allows initial review even when can_reevaluate is disabled', async () => {
+  test('Prompt2 evaluate allows the first review even when can_reevaluate is disabled, then locks after substantive success', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -968,18 +1002,20 @@ if (!hasDatabaseUrl()) {
     });
     const allowedRecipientCookie = makeRecipientCookie('p2_eval_allowed', 'recipient2@example.com');
 
-    // Stub evaluator in-process so test does not depend on external Vertex config.
-    // This suite is run serially in CI (`--test-concurrency=1`) and always restores in finally.
     const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
-    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
-      report: {
-        recommendation: 'proceed',
-        executive_summary: 'Recipient-safe summary from shared text only.',
-        sections: [{ heading: 'Fit', bullets: ['Alignment is moderate based on shared terms.'] }],
-      },
-      evaluation_provider: 'test',
-      similarity_score: 72,
-    });
+    let evaluatorCallCount = 0;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => {
+      evaluatorCallCount += 1;
+      return {
+        report: {
+          recommendation: 'proceed',
+          executive_summary: 'Recipient-safe summary from shared text only.',
+          sections: [{ heading: 'Fit', bullets: ['Alignment is moderate based on shared terms.'] }],
+        },
+        evaluation_provider: 'test',
+        similarity_score: 72,
+      };
+    };
 
     try {
       const saveDisallowedDraftRes = await saveRecipientDraft(disallowed.token, {
@@ -997,11 +1033,12 @@ if (!hasDatabaseUrl()) {
 
       const disallowedInitialEvaluateRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
       assert.equal(disallowedInitialEvaluateRes.statusCode, 200);
+      assert.equal(evaluatorCallCount, 1);
 
       const saveDisallowedChangedDraftRes = await saveRecipientDraft(disallowed.token, {
         shared_payload: {
           label: 'Shared Information',
-          text: 'Recipient changed shared input attempts an additional same-round re-review and should be blocked when disabled.',
+          text: 'Recipient changed shared input after a successful review and should now be locked.',
         },
         recipient_confidential_payload: {
           label: 'Confidential Information',
@@ -1009,11 +1046,19 @@ if (!hasDatabaseUrl()) {
         },
         workflow_step: 2,
       }, disallowedRecipientCookie);
-      assert.equal(saveDisallowedChangedDraftRes.statusCode, 200);
+      assert.equal(saveDisallowedChangedDraftRes.statusCode, 409);
+      assert.equal(saveDisallowedChangedDraftRes.jsonBody().error.code, 'reviewed_response_locked');
 
-      const disallowedRereviewRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
-      assert.equal(disallowedRereviewRes.statusCode, 403);
-      assert.equal(disallowedRereviewRes.jsonBody().error.code, 'reevaluation_not_allowed');
+      const disallowedCachedReviewRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
+      assert.equal(disallowedCachedReviewRes.statusCode, 200);
+      assert.equal(disallowedCachedReviewRes.jsonBody().cached, true);
+      assert.equal(disallowedCachedReviewRes.jsonBody().review_locked, true);
+      assert.equal(evaluatorCallCount, 1);
+
+      const disallowedLockedWorkspaceRes = await getRecipientWorkspace(disallowed.token, disallowedRecipientCookie);
+      assert.equal(disallowedLockedWorkspaceRes.statusCode, 200);
+      assert.equal(disallowedLockedWorkspaceRes.jsonBody()?.share?.review_state?.is_locked, true);
+      assert.equal(disallowedLockedWorkspaceRes.jsonBody()?.share?.permissions?.can_edit_shared, false);
 
       const saveAllowedDraftRes = await saveRecipientDraft(allowed.token, {
         shared_payload: {
@@ -1034,12 +1079,33 @@ if (!hasDatabaseUrl()) {
       assert.equal(body.ok, true);
       assert.equal(Boolean(body.evaluation_id), true);
       assert.equal(typeof body.evaluation.public_report, 'object');
+      assert.equal(evaluatorCallCount, 2);
+
+      const saveAllowedChangedDraftRes = await saveRecipientDraft(allowed.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient changed shared input after a successful review on a can_reevaluate=true link.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential contribution is also locked after the first substantive review.',
+        },
+        workflow_step: 2,
+      }, allowedRecipientCookie);
+      assert.equal(saveAllowedChangedDraftRes.statusCode, 409);
+      assert.equal(saveAllowedChangedDraftRes.jsonBody().error.code, 'reviewed_response_locked');
+
+      const allowedCachedReviewRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
+      assert.equal(allowedCachedReviewRes.statusCode, 200);
+      assert.equal(allowedCachedReviewRes.jsonBody().cached, true);
+      assert.equal(allowedCachedReviewRes.jsonBody().review_locked, true);
+      assert.equal(evaluatorCallCount, 2);
     } finally {
       globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
     }
   });
 
-  test('Prompt2 evaluate owner exhaustion blocks only new review generation', async () => {
+  test('Prompt2 evaluate owner exhaustion blocks review generation and therefore blocks send-back', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -1122,8 +1188,8 @@ if (!hasDatabaseUrl()) {
       assert.equal(workspaceRes.statusCode, 200);
 
       const sendBackRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(sendBackRes.statusCode, 200);
-      assert.equal(sendBackRes.jsonBody()?.status, 'sent');
+      assert.equal(sendBackRes.statusCode, 409);
+      assert.equal(sendBackRes.jsonBody()?.error?.code, 'ai_review_required_before_send');
     } finally {
       if (previousEvaluator === undefined) {
         delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
@@ -1133,7 +1199,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('Prompt2 send-back requires draft and marks recipient revision as sent', async () => {
+  test('Prompt2 send-back requires a reviewed draft and marks recipient revision as sent', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -1165,6 +1231,13 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, recipientCookie);
     assert.equal(saveRes.statusCode, 200);
+
+    const preReviewSendRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(preReviewSendRes.statusCode, 409);
+    assert.equal(preReviewSendRes.jsonBody().error.code, 'ai_review_required_before_send');
+
+    const reviewRes = await evaluateRecipientDraftWithMockedSuccess(link.token, recipientCookie);
+    assert.equal(reviewRes.statusCode, 200);
 
     const sendRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
     assert.equal(sendRes.statusCode, 200);
@@ -1224,6 +1297,9 @@ if (!hasDatabaseUrl()) {
     }, recipientCookie);
     assert.equal(round2Save.statusCode, 200);
 
+    const round2Review = await evaluateRecipientDraftWithMockedSuccess(initialLink.token, recipientCookie);
+    assert.equal(round2Review.statusCode, 200);
+
     const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
     assert.equal(round2Send.statusCode, 200);
     const round2ReturnLink = round2Send.jsonBody().return_link || {};
@@ -1247,6 +1323,9 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, ownerCookie);
     assert.equal(round3Save.statusCode, 200);
+
+    const round3Review = await evaluateRecipientDraftWithMockedSuccess(round2Token, ownerCookie);
+    assert.equal(round3Review.statusCode, 200);
 
     const round3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
     assert.equal(round3Send.statusCode, 200);
@@ -1345,6 +1424,9 @@ if (!hasDatabaseUrl()) {
     }, recipientCookie);
     assert.equal(round2Save.statusCode, 200);
 
+    const round2Review = await evaluateRecipientDraftWithMockedSuccess(initialLink.token, recipientCookie);
+    assert.equal(round2Review.statusCode, 200);
+
     const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
     assert.equal(round2Send.statusCode, 200);
     const round2Token = String(round2Send.jsonBody().return_link?.token || '');
@@ -1372,6 +1454,9 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, ownerCookie);
     assert.equal(round3Save.statusCode, 200);
+
+    const round3Review = await evaluateRecipientDraftWithMockedSuccess(round2Token, ownerCookie);
+    assert.equal(round3Review.statusCode, 200);
 
     const round3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
     assert.equal(round3Send.statusCode, 200);
@@ -1423,6 +1508,9 @@ if (!hasDatabaseUrl()) {
     }, recipientCookie);
     assert.equal(round2Save.statusCode, 200);
 
+    const round2Review = await evaluateRecipientDraftWithMockedSuccess(initialLink.token, recipientCookie);
+    assert.equal(round2Review.statusCode, 200);
+
     const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
     assert.equal(round2Send.statusCode, 200);
     const round2Token = String(round2Send.jsonBody().return_link?.token || '');
@@ -1434,6 +1522,9 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, ownerCookie);
     assert.equal(round3Save.statusCode, 200);
+
+    const round3Review = await evaluateRecipientDraftWithMockedSuccess(round2Token, ownerCookie);
+    assert.equal(round3Review.statusCode, 200);
 
     const round3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
     assert.equal(round3Send.statusCode, 200);
@@ -1579,6 +1670,8 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, recipientACookie);
     assert.equal(round2SaveA.statusCode, 200);
+    const round2ReviewA = await evaluateRecipientDraftWithMockedSuccess(linkABody.token, recipientACookie);
+    assert.equal(round2ReviewA.statusCode, 200);
     const round2SendA = await sendBackRecipientDraft(linkABody.token, {}, recipientACookie);
     assert.equal(round2SendA.statusCode, 200);
 
@@ -1588,6 +1681,8 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, recipientBCookie);
     assert.equal(round2SaveB.statusCode, 200);
+    const round2ReviewB = await evaluateRecipientDraftWithMockedSuccess(linkBBody.token, recipientBCookie);
+    assert.equal(round2ReviewB.statusCode, 200);
     const round2SendB = await sendBackRecipientDraft(linkBBody.token, {}, recipientBCookie);
     assert.equal(round2SendB.statusCode, 200);
 
@@ -1688,7 +1783,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('Prompt2 send-back supersedes previous sent revision and links proposer artifact to latest revision', async () => {
+  test('Prompt2 sent link becomes immutable while the new round link allows a fresh review', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -1714,25 +1809,29 @@ if (!hasDatabaseUrl()) {
     }, recipientCookie);
     assert.equal(save1.statusCode, 200);
 
+    const review1 = await evaluateRecipientDraftWithMockedSuccess(link.token, recipientCookie, {
+      executiveSummary: 'Recipient round one review is ready to send.',
+    });
+    assert.equal(review1.statusCode, 200);
+
     const send1 = await sendBackRecipientDraft(link.token, {}, recipientCookie);
     assert.equal(send1.statusCode, 200);
     const firstRevisionId = String(send1.jsonBody().revision_id || '');
     assert.notEqual(firstRevisionId, '');
     assert.equal(send1.jsonBody().status, 'sent');
 
-    const save2 = await saveRecipientDraft(link.token, {
-      shared_payload: { label: 'Shared Information', text: 'Recipient shared v2' },
-      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient private v2' },
+    const lockedSaveRes = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient shared v2 should be rejected on the sent link.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient private v2 should be rejected on the sent link.' },
       workflow_step: 2,
     }, recipientCookie);
-    assert.equal(save2.statusCode, 200);
+    assert.equal(lockedSaveRes.statusCode, 409);
+    assert.equal(lockedSaveRes.jsonBody().error.code, 'reviewed_response_locked');
 
-    const send2 = await sendBackRecipientDraft(link.token, {}, recipientCookie);
-    assert.equal(send2.statusCode, 200);
-    const secondRevisionId = String(send2.jsonBody().revision_id || '');
-    assert.notEqual(secondRevisionId, '');
-    assert.notEqual(secondRevisionId, firstRevisionId);
-    assert.equal(send2.jsonBody().status, 'sent');
+    const oldLinkCachedReviewRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(oldLinkCachedReviewRes.statusCode, 200);
+    assert.equal(oldLinkCachedReviewRes.jsonBody()?.cached, true);
+    assert.equal(oldLinkCachedReviewRes.jsonBody()?.review_locked, true);
 
     const db = getDb();
     const revisions = await db.execute(
@@ -1740,24 +1839,34 @@ if (!hasDatabaseUrl()) {
           where shared_link_id = (select id from shared_links where token = ${link.token})
           order by created_at asc`,
     );
-    assert.equal(revisions.rows.length, 2);
+    assert.equal(revisions.rows.length, 1);
+    assert.equal(String(revisions.rows[0]?.id || ''), firstRevisionId);
+    assert.equal(String(revisions.rows[0]?.status || ''), 'sent');
 
-    const firstRow = revisions.rows.find((row) => String(row.id) === firstRevisionId);
-    const secondRow = revisions.rows.find((row) => String(row.id) === secondRevisionId);
-    assert.equal(String(firstRow?.status || ''), 'superseded');
-    assert.equal(String(secondRow?.status || ''), 'sent');
-    assert.equal(String(secondRow?.previous_revision_id || ''), firstRevisionId);
-
-    const artifacts = await db.execute(
-      sql`select source, proposal_id, result
-          from proposal_evaluations
+    const round2LinkRows = await db.execute(
+      sql`select token
+          from shared_links
           where proposal_id = ${comparison.proposal_id}
-          order by created_at desc`,
+            and token <> ${link.token}
+          order by created_at desc
+          limit 1`,
     );
-    assert.equal(artifacts.rows.length >= 2, true);
-    assert.equal(String(artifacts.rows[0].source || ''), 'shared_report_mediation');
-    assert.equal(String(artifacts.rows[0].proposal_id || ''), String(comparison.proposal_id));
-    assert.equal(String((artifacts.rows[0].result || {}).revision_id || ''), secondRevisionId);
+    const round2Token = String(round2LinkRows.rows[0]?.token || '');
+    assert.notEqual(round2Token, '');
+
+    const round2Save = await saveRecipientDraft(round2Token, {
+      shared_payload: { label: 'Shared Information', text: 'Proposer shared v2 on the fresh round link.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Proposer private v2 on the fresh round link.' },
+      workflow_step: 2,
+    }, ownerCookie);
+    assert.equal(round2Save.statusCode, 200);
+
+    const round2Review = await evaluateRecipientDraftWithMockedSuccess(round2Token, ownerCookie, {
+      executiveSummary: 'Round two review is allowed on the fresh shared link.',
+      similarityScore: 74,
+    });
+    assert.equal(round2Review.statusCode, 200);
+    assert.equal(Boolean(round2Review.jsonBody()?.evaluation_id), true);
   });
 
   test('Prompt2 permission matrix view-only token loads workspace but blocks edit/evaluate/send-back', async () => {
@@ -1928,6 +2037,9 @@ if (!hasDatabaseUrl()) {
     }, recipientCookie);
     assert.equal(saveRound2.statusCode, 200);
 
+    const reviewRound2 = await evaluateRecipientDraftWithMockedSuccess(initialLink.token, recipientCookie);
+    assert.equal(reviewRound2.statusCode, 200);
+
     const sendRound2 = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
     assert.equal(sendRound2.statusCode, 200);
 
@@ -1965,6 +2077,9 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, ownerCookie);
     assert.equal(ownerRound3Save.statusCode, 200);
+
+    const ownerRound3Review = await evaluateRecipientDraftWithMockedSuccess(round2Token, ownerCookie);
+    assert.equal(ownerRound3Review.statusCode, 200);
 
     const ownerRound3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
     assert.equal(ownerRound3Send.statusCode, 200);
@@ -2050,6 +2165,9 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, recipientCookie);
     assert.equal(round2Save.statusCode, 200);
+
+    const round2Review = await evaluateRecipientDraftWithMockedSuccess(initialLink.token, recipientCookie);
+    assert.equal(round2Review.statusCode, 200);
 
     const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
     assert.equal(round2Send.statusCode, 200);
@@ -2163,6 +2281,9 @@ if (!hasDatabaseUrl()) {
     }, recipientCookie);
     assert.equal(round2Save.statusCode, 200);
 
+    const round2Review = await evaluateRecipientDraftWithMockedSuccess(initialLink.token, recipientCookie);
+    assert.equal(round2Review.statusCode, 200);
+
     const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
     assert.equal(round2Send.statusCode, 200);
 
@@ -2187,6 +2308,9 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, ownerCookie);
     assert.equal(ownerRound3Save.statusCode, 200);
+
+    const ownerRound3Review = await evaluateRecipientDraftWithMockedSuccess(round2Token, ownerCookie);
+    assert.equal(ownerRound3Review.statusCode, 200);
 
     const ownerRound3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
     assert.equal(ownerRound3Send.statusCode, 200);
@@ -2248,6 +2372,9 @@ if (!hasDatabaseUrl()) {
       workflow_step: 2,
     }, recipientCookie);
     assert.equal(round4Save.statusCode, 200);
+
+    const round4Review = await evaluateRecipientDraftWithMockedSuccess(round3Token, recipientCookie);
+    assert.equal(round4Review.statusCode, 200);
 
     const round4Send = await sendBackRecipientDraft(round3Token, {}, recipientCookie);
     assert.equal(round4Send.statusCode, 200);
@@ -2451,6 +2578,110 @@ if (!hasDatabaseUrl()) {
     assert.equal(evaluateRes.jsonBody()?.error?.code || evaluateRes.jsonBody()?.code, 'recipient_input_required');
   });
 
+  test('shared-report failed or no-substantive evaluation remains editable and retryable', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'shared_report_failed_review_retryable';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Failed Review Retry Test',
+      docAText: 'Internal proposer notes and fallback constraints for the draft.',
+      docBText: 'Shared proposer draft with scope, milestones, and responsibilities.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+    });
+
+    const initialSaveRes = await saveRecipientDraft(link.token, {
+      shared_payload: {
+        label: 'Shared Information',
+        text: 'Recipient response adds delivery sequencing, dependency limits, and acceptance constraints.',
+      },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Recipient confidential notes add commercial boundaries for internal review.',
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(initialSaveRes.statusCode, 200);
+
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    let evaluatorCallCount = 0;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => {
+      evaluatorCallCount += 1;
+      if (evaluatorCallCount === 1) {
+        return {
+          report: {
+            recommendation: 'review',
+            executive_summary: 'AI mediation fallback returned no substantive result.',
+            renderer_path: 'fallback',
+            narrative_valid: false,
+            generation_status: 'failed',
+            retry_recommended: true,
+            sections: [{ heading: 'Retry', bullets: ['Retry the mediation review.'] }],
+          },
+          evaluation_provider: 'test',
+          similarity_score: 40,
+        };
+      }
+      return {
+        report: {
+          recommendation: 'review',
+          executive_summary: 'Recipient contribution received on retry.',
+          sections: [{ heading: 'Summary', bullets: ['Recipient contribution received on retry.'] }],
+        },
+        evaluation_provider: 'test',
+        similarity_score: 67,
+      };
+    };
+
+    try {
+      const failedEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(failedEvaluateRes.statusCode, 200);
+      assert.equal(failedEvaluateRes.jsonBody()?.cached || false, false);
+      assert.equal(failedEvaluateRes.jsonBody()?.review_locked || false, false);
+
+      const postFailureSaveRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient response stays editable after a failed/no-substantive review and can be retried.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential notes stay editable after a failed/no-substantive review.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(postFailureSaveRes.statusCode, 200);
+
+      const retryEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(retryEvaluateRes.statusCode, 200);
+      assert.equal(retryEvaluateRes.jsonBody()?.cached || false, false);
+      const retryReport =
+        retryEvaluateRes.jsonBody()?.evaluation?.public_report ||
+        retryEvaluateRes.jsonBody()?.evaluation?.evaluation_result?.report ||
+        {};
+      assert.equal(
+        retryReport.generation_status || 'completed',
+        'completed',
+      );
+      assert.equal(evaluatorCallCount, 2);
+    } finally {
+      if (previousEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+      }
+    }
+  });
+
   test('shared-report evaluate succeeds once recipient saves meaningful content', async () => {
     await ensureMigrated();
     await resetTables();
@@ -2504,21 +2735,21 @@ if (!hasDatabaseUrl()) {
       const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(evaluateRes.statusCode, 200);
       const firstBody = evaluateRes.jsonBody();
+      assert.equal(firstBody?.review_locked, undefined);
 
-      // Cache hit: exact same draft/round inputs reuse the saved successful
-      // result, so no model call or owner review-credit usage is added.
       const duplicateEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(duplicateEvaluateRes.statusCode, 200);
       const duplicateBody = duplicateEvaluateRes.jsonBody();
       assert.equal(duplicateBody?.cached, true);
+      assert.equal(duplicateBody?.review_locked, true);
       assert.equal(duplicateBody?.evaluation_id, firstBody?.evaluation_id);
       assert.equal(evaluatorCallCount, 1);
 
-      const changedSaveRes = await saveRecipientDraft(link.token, {
+      const lockedSaveRes = await saveRecipientDraft(link.token, {
         shared_payload: {
           label: 'Shared Information',
           text:
-            'Recipient response changes the same round with revised sequencing, dependency limits, acceptance constraints, and rollout governance.',
+            'Recipient response changes the same round after a successful review and should now be locked.',
         },
         recipient_confidential_payload: {
           label: 'Confidential Information',
@@ -2526,42 +2757,31 @@ if (!hasDatabaseUrl()) {
         },
         workflow_step: 2,
       }, recipientCookie);
-      assert.equal(changedSaveRes.statusCode, 200);
+      assert.equal(lockedSaveRes.statusCode, 409);
+      assert.equal(lockedSaveRes.jsonBody()?.error?.code, 'reviewed_response_locked');
 
-      // First changed-input re-review is allowed when canReevaluate=true.
-      const secondEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(secondEvaluateRes.statusCode, 200);
-      assert.equal(evaluatorCallCount, 2);
+      const workspaceAfterLockRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceAfterLockRes.statusCode, 200);
+      assert.equal(workspaceAfterLockRes.jsonBody()?.share?.review_state?.is_locked, true);
+      assert.equal(workspaceAfterLockRes.jsonBody()?.share?.permissions?.can_edit_shared, false);
 
-      const secondChangedSaveRes = await saveRecipientDraft(link.token, {
+      const sendBackAfterReviewRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(sendBackAfterReviewRes.statusCode, 200);
+      assert.equal(sendBackAfterReviewRes.jsonBody()?.status, 'sent');
+
+      const postSendSaveRes = await saveRecipientDraft(link.token, {
         shared_payload: {
           label: 'Shared Information',
-          text:
-            'Recipient response applies a second changed-input update in the same round and should exceed the one additional re-review cap.',
+          text: 'Recipient attempts to mutate a sent reviewed response and should be rejected.',
         },
         recipient_confidential_payload: {
           label: 'Confidential Information',
-          notes: 'Recipient confidential notes add commercial boundaries for internal review.',
+          notes: 'Recipient attempts to mutate confidential text after send.',
         },
         workflow_step: 2,
       }, recipientCookie);
-      assert.equal(secondChangedSaveRes.statusCode, 200);
-
-      const cappedEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(cappedEvaluateRes.statusCode, 409);
-      assert.equal(cappedEvaluateRes.jsonBody()?.error?.code, 'recipient_rereview_limit_reached');
-      assert.equal(
-        cappedEvaluateRes.jsonBody()?.error?.message,
-        'A re-review has already been generated for this round. You can still edit and send your response, or ask the opportunity owner to review the next update.',
-      );
-      assert.equal(evaluatorCallCount, 2);
-
-      const workspaceAfterCapRes = await getRecipientWorkspace(link.token, recipientCookie);
-      assert.equal(workspaceAfterCapRes.statusCode, 200);
-
-      const sendBackAfterCapRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
-      assert.equal(sendBackAfterCapRes.statusCode, 200);
-      assert.equal(sendBackAfterCapRes.jsonBody()?.status, 'sent');
+      assert.equal(postSendSaveRes.statusCode, 409);
+      assert.equal(postSendSaveRes.jsonBody()?.error?.code, 'reviewed_response_locked');
 
       const db = getDb();
       const evalRunRows = await db.execute(
@@ -2572,7 +2792,7 @@ if (!hasDatabaseUrl()) {
             limit 10`,
       );
       const successfulRuns = evalRunRows.rows.filter((row) => row?.result_json?.input_trace);
-      assert.equal(successfulRuns.length, 2);
+      assert.equal(successfulRuns.length, 1);
       const inputTrace = successfulRuns[0]?.result_json?.input_trace || {};
       assert.equal(inputTrace.analysis_stage ?? 'mediation_review', 'mediation_review');
       assert.equal(Boolean(inputTrace.has_meaningful_recipient_content), true);
@@ -2955,6 +3175,9 @@ if (!hasDatabaseUrl()) {
       }, ownerCookie);
       assert.equal(ownerRoundSaveRes.statusCode, 200);
 
+      const ownerRoundEvaluateRes = await evaluateRecipientDraft(ownerReturnToken, {}, ownerCookie, { engine: 'v2' });
+      assert.equal(ownerRoundEvaluateRes.statusCode, 200);
+
       const ownerSendBackRes = await sendBackRecipientDraft(ownerReturnToken, {}, ownerCookie);
       assert.equal(ownerSendBackRes.statusCode, 200);
       const recipientRoundTwoToken = String(ownerSendBackRes.jsonBody()?.return_link?.token || '');
@@ -2978,7 +3201,7 @@ if (!hasDatabaseUrl()) {
 
       const secondReport = secondEvaluateRes.jsonBody()?.evaluation?.evaluation_result?.report || {};
       assert.equal(secondReport.analysis_stage, 'mediation_review');
-      assert.equal(secondReport.bilateral_round_number, 2);
+      assert.equal(secondReport.bilateral_round_number, 3);
       assert.equal(secondReport.movement_direction, 'converging');
       assert.match(secondReport.delta_summary, /Since the prior bilateral round/i);
       assert.equal(Array.isArray(secondReport.presentation_sections), true);

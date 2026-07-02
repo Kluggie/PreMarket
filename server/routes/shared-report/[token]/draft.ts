@@ -9,12 +9,15 @@ import { schema } from '../../../_lib/db/client.js';
 import {
   DRAFT_STATUS,
   RECIPIENT_ROLE,
+  SENT_STATUS,
   SHARED_REPORT_ROUTE,
+  buildReviewedResponseLockedError,
   buildDefaultConfidentialPayload,
   assertJsonObjectField,
   assertPayloadSize,
   buildDefaultSharedPayload,
   getCurrentRecipientDraft,
+  getLatestRecipientSubstantiveEvaluationRunForRevision,
   getLatestRecipientSentRevision,
   getToken,
   logTokenEvent,
@@ -104,6 +107,35 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     });
     requireRecipientAuthorization(resolved.link, auth.user);
 
+    const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
+    const latestSentRevision = currentDraft
+      ? null
+      : await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
+
+    if (currentDraft) {
+      const lockedEvaluation = await getLatestRecipientSubstantiveEvaluationRunForRevision(
+        resolved.db,
+        resolved.link.id,
+        currentDraft.id,
+      );
+      if (lockedEvaluation) {
+        throw buildReviewedResponseLockedError(undefined, {
+          evaluation_id: lockedEvaluation.id,
+          revision_id: currentDraft.id,
+          shared_link_id: resolved.link.id,
+        });
+      }
+    } else if (latestSentRevision) {
+      throw buildReviewedResponseLockedError(
+        'This reviewed response has already been sent and this shared link is now read-only.',
+        {
+          revision_id: latestSentRevision.id,
+          shared_link_id: resolved.link.id,
+          status: latestSentRevision.status || SENT_STATUS,
+        },
+      );
+    }
+
     const body = await readJsonBody(req);
     const sharedPayload = pickSharedPayload(body);
     const confidentialPayload = pickConfidentialPayload(body);
@@ -117,7 +149,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     assertPayloadSize(confidentialPayload, 'recipient_confidential_payload');
     assertPayloadSize(editorState, 'editor_state');
 
-    const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
     const workflowStep = clampWorkflowStep(
       pickWorkflowStep(body),
       currentDraft ? Number(currentDraft.workflowStep || 0) : 0,
@@ -159,7 +190,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         .returning();
       savedDraft = updated || currentDraft;
     } else {
-      const latestSentRevision = await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
       const [created] = await resolved.db
         .insert(schema.sharedReportRecipientRevisions)
         .values({
